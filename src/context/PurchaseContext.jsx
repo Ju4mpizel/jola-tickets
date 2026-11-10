@@ -1,11 +1,13 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react';
+import { MAX_SEATS, TOTAL_SEATS } from '@/lib/event';
 
 /**
- * Estado central de la compra (versión inicial del paso 2: paso y comprador).
+ * Estado central de la compra: paso, comprador y asientos elegidos.
  * El paso vive en la URL (?paso=asientos) para que el botón atrás del celular funcione.
- * En pasos siguientes se agregan selección, orden y persistencia.
+ * La selección se guarda en sessionStorage para que una recarga no la pierda.
+ * En pasos siguientes se agregan la orden y su persistencia.
  */
 
 export const STEPS = [
@@ -17,7 +19,9 @@ export const STEPS = [
 const STEP_IDS = STEPS.map((s) => s.id);
 const FIRST_STEP = STEP_IDS[0];
 
-const initialState = { step: FIRST_STEP, buyer: null };
+const SELECTION_KEY = 'jola-selection';
+
+const initialState = { step: FIRST_STEP, buyer: null, selected: [] };
 
 function reducer(state, action) {
   switch (action.type) {
@@ -25,8 +29,30 @@ function reducer(state, action) {
       return { ...state, step: action.step };
     case 'SET_BUYER':
       return { ...state, buyer: action.buyer };
+    case 'TOGGLE_SEAT': {
+      const { id } = action;
+      if (state.selected.includes(id)) return { ...state, selected: state.selected.filter((s) => s !== id) };
+      if (state.selected.length >= MAX_SEATS) return state;
+      return { ...state, selected: [...state.selected, id] };
+    }
+    case 'CLEAR_SELECTION':
+      return state.selected.length ? { ...state, selected: [] } : state;
+    case 'RESTORE_SELECTION':
+      return { ...state, selected: action.selected };
     default:
       return state;
+  }
+}
+
+/** Selección guardada en esta pestaña; ignora cualquier dato con otra forma. */
+function readSelection() {
+  try {
+    const raw = JSON.parse(window.sessionStorage.getItem(SELECTION_KEY) ?? '[]');
+    if (!Array.isArray(raw)) return [];
+    const ids = raw.filter((id) => Number.isInteger(id) && id >= 1 && id <= TOTAL_SEATS);
+    return [...new Set(ids)].slice(0, MAX_SEATS);
+  } catch {
+    return [];
   }
 }
 
@@ -56,6 +82,9 @@ export function PurchaseProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const buyerRef = useRef(state.buyer);
   buyerRef.current = state.buyer;
+  const selectedRef = useRef(state.selected);
+  selectedRef.current = state.selected;
+  const restored = useRef(false);
 
   // Sin comprador, cualquier paso vuelve a "datos" (y la URL también)
   const step = state.buyer ? state.step : FIRST_STEP;
@@ -73,6 +102,50 @@ export function PurchaseProvider({ children }) {
     syncFromUrl();
     window.addEventListener('popstate', syncFromUrl);
     return () => window.removeEventListener('popstate', syncFromUrl);
+  }, []);
+
+  // Recupera la selección al montar y la guarda en cada cambio (después de recuperarla)
+  useEffect(() => {
+    if (!restored.current) {
+      restored.current = true;
+      const saved = readSelection();
+      if (saved.length) dispatch({ type: 'RESTORE_SELECTION', selected: saved });
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(SELECTION_KEY, JSON.stringify(state.selected));
+    } catch {
+      /* almacenamiento bloqueado: la selección solo vive en memoria */
+    }
+  }, [state.selected]);
+
+  /**
+   * Elige o quita un asiento.
+   * @param {number} id
+   * @returns {'added' | 'removed' | 'limit'}  'limit': ya hay MAX_SEATS y no se agregó
+   */
+  const toggleSeat = useCallback((id) => {
+    const current = selectedRef.current;
+    const result = current.includes(id) ? 'removed' : current.length >= MAX_SEATS ? 'limit' : 'added';
+    if (result !== 'limit') {
+      selectedRef.current = result === 'added' ? [...current, id] : current.filter((s) => s !== id);
+      dispatch({ type: 'TOGGLE_SEAT', id });
+    }
+    return result;
+  }, []);
+
+  /** Quita de la selección los asientos indicados (ej. los que otra persona ocupó). */
+  const removeSeats = useCallback((ids) => {
+    ids.forEach((id) => {
+      if (!selectedRef.current.includes(id)) return;
+      selectedRef.current = selectedRef.current.filter((s) => s !== id);
+      dispatch({ type: 'TOGGLE_SEAT', id });
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    selectedRef.current = [];
+    dispatch({ type: 'CLEAR_SELECTION' });
   }, []);
 
   /** Guarda los datos del comprador (ya validados). */
@@ -103,8 +176,20 @@ export function PurchaseProvider({ children }) {
   }, [step, goTo]);
 
   const value = useMemo(
-    () => ({ step, stepIndex: STEP_IDS.indexOf(step), steps: STEPS, buyer: state.buyer, setBuyer, goTo, goBack }),
-    [step, state.buyer, setBuyer, goTo, goBack],
+    () => ({
+      step,
+      stepIndex: STEP_IDS.indexOf(step),
+      steps: STEPS,
+      buyer: state.buyer,
+      setBuyer,
+      goTo,
+      goBack,
+      selected: state.selected,
+      toggleSeat,
+      removeSeats,
+      clearSelection,
+    }),
+    [step, state.buyer, state.selected, setBuyer, goTo, goBack, toggleSeat, removeSeats, clearSelection],
   );
 
   return <PurchaseContext.Provider value={value}>{children}</PurchaseContext.Provider>;
@@ -117,6 +202,10 @@ export function PurchaseProvider({ children }) {
  *   setBuyer: (buyer: object) => void,
  *   goTo: (step: string, options?: { replace?: boolean }) => void,
  *   goBack: () => void,
+ *   selected: number[],                              // ids de asiento, en el orden en que se eligieron
+ *   toggleSeat: (id: number) => 'added' | 'removed' | 'limit',
+ *   removeSeats: (ids: number[]) => void,
+ *   clearSelection: () => void,
  * }}
  */
 export function usePurchase() {

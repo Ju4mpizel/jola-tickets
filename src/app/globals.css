@@ -2,6 +2,8 @@
 
 /* Modo oscuro por clase en <html> (next-themes, attribute="class") */
 @custom-variant dark (&:where(.dark, .dark *));
+/* Celular horizontal o pantallas bajas (igual que el prototipo) */
+@custom-variant short (@media (max-width: 1023px) and (max-height: 540px));
 
 /* ============ Tokens de marca JOLA (iguales al prototipo) ============ */
 :root {
@@ -125,6 +127,7 @@
 /* Mapa de asientos */
 @keyframes stage-in { from { opacity: 0; transform: translateY(-12px) scaleX(.6); letter-spacing: .1em; } }
 @keyframes band-in { from { opacity: 0; transform: scaleY(.6); } }
+@keyframes mm-in { from { opacity: 0; transform: scale(.6); } }
 @keyframes dash { from { clip-path: inset(0 50% 0 50%); } }
 /* Inicio: hero y formulario */
 @keyframes hero-in { from { opacity: 0; transform: scale(.97); } }

@@ -34,6 +34,12 @@
   color-scheme: dark;
 }
 
+/* Fuentes autoalojadas (@fontsource-variable, importadas en layout.jsx) */
+:root {
+  --font-urbanist: "Urbanist Variable", system-ui, sans-serif;
+  --font-fredoka: "Fredoka Variable", system-ui, sans-serif;
+}
+
 /* Tokens que cambian con el tema → clases bg-surface, text-ink, border-line… */
 @theme inline {
   --color-bg: var(--bg);

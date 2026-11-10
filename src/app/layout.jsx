@@ -1,22 +1,9 @@
-import { Fredoka, Urbanist } from 'next/font/google';
+import '@fontsource-variable/fredoka';
+import '@fontsource-variable/urbanist';
 import { ThemeProvider } from 'next-themes';
 import ToastProvider from '@/components/ui/ToastProvider';
 import { EVENT } from '@/lib/event';
 import './globals.css';
-
-const fredoka = Fredoka({
-  subsets: ['latin'],
-  weight: ['600', '700'],
-  variable: '--font-fredoka',
-  display: 'swap',
-});
-
-const urbanist = Urbanist({
-  subsets: ['latin'],
-  weight: ['500', '600', '700', '800'],
-  variable: '--font-urbanist',
-  display: 'swap',
-});
 
 export const metadata = {
   title: `JOLA · ${EVENT.name}`,
@@ -36,7 +23,7 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="es-BO" className={`${fredoka.variable} ${urbanist.variable}`} suppressHydrationWarning>
+    <html lang="es-BO" suppressHydrationWarning>
       <body>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem storageKey="jola-theme">
           <ToastProvider>{children}</ToastProvider>

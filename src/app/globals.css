@@ -1,0 +1,165 @@
+@import "tailwindcss";
+
+/* Modo oscuro por clase en <html> (next-themes, attribute="class") */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============ Tokens de marca JOLA (iguales al prototipo) ============ */
+:root {
+  --bg: #F4F7FB; --surface: #FFFFFF; --surface-2: #F1F5FA; --surface-3: #E6EDF6;
+  --ink: #0B1B48; --muted: #56638A; --line: #E0E7F1;
+  --primary: #0A1F5C; --on-primary: #FFFFFF;
+  --sel: #7FD6E6; --on-sel: #0A1F5C; --sel-glow: rgba(127, 214, 230, .55);
+  --accent-ink: #0B7A8F;
+  --taken: #E9EEF5; --taken-line: #CCD5E3;
+  --band: rgba(127, 214, 230, .13); --band-line: rgba(43, 179, 204, .35);
+  --danger-ink: #D33553;
+  --elev-sm: 0 1px 2px rgba(10, 31, 92, .06);
+  --elev: 0 1px 2px rgba(10, 31, 92, .05), 0 10px 30px -8px rgba(10, 31, 92, .12);
+  --logo-tile: #FFFFFF;
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #060D22; --surface: #0C1631; --surface-2: #111D3C; --surface-3: #18264A;
+  --ink: #EAF0FF; --muted: #9AA8CB; --line: #1D2B50;
+  --primary: #7FD6E6; --on-primary: #061233;
+  --sel: #7FD6E6; --on-sel: #061233; --sel-glow: rgba(127, 214, 230, .35);
+  --accent-ink: #7FD6E6;
+  --taken: #111B37; --taken-line: #26345C;
+  --band: rgba(127, 214, 230, .06); --band-line: rgba(127, 214, 230, .25);
+  --danger-ink: #FF8A9D;
+  --elev-sm: 0 1px 2px rgba(0, 0, 0, .4);
+  --elev: 0 1px 2px rgba(0, 0, 0, .35), 0 14px 36px -10px rgba(0, 0, 0, .55);
+  --logo-tile: #EEF3FB;
+  color-scheme: dark;
+}
+
+/* Tokens que cambian con el tema → clases bg-surface, text-ink, border-line… */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-sel: var(--sel);
+  --color-on-sel: var(--on-sel);
+  --color-sel-glow: var(--sel-glow);
+  --color-accent-ink: var(--accent-ink);
+  --color-taken: var(--taken);
+  --color-taken-line: var(--taken-line);
+  --color-band: var(--band);
+  --color-band-line: var(--band-line);
+  --color-danger-ink: var(--danger-ink);
+  --color-logo-tile: var(--logo-tile);
+  --shadow-elev-sm: var(--elev-sm);
+  --shadow-elev: var(--elev);
+  --font-sans: var(--font-urbanist), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-brand: var(--font-fredoka), sans-serif;
+}
+
+/* Tokens fijos y animaciones */
+@theme {
+  --color-navy: #0A1F5C;
+  --color-hero: #071640;
+  --color-cyan: #7FD6E6;
+  --color-cyan-strong: #2BB3CC;
+  --color-danger: #E0445F;
+  --color-ok: #22B07D;
+  --radius-card: 22px;
+
+  --animate-rise: rise .5s ease both;
+  --animate-fade-in: fade-in .4s ease;
+  --animate-card-in: card-in .6s .1s cubic-bezier(.2, .8, .2, 1) both;
+  --animate-seat-in: seat-in .55s cubic-bezier(.3, 1.45, .5, 1) backwards;
+  --animate-wiggle: wiggle 6s ease-in-out 1.2s infinite;
+  --animate-fill: fill .6s .3s ease both;
+  --animate-pop: pop .45s cubic-bezier(.3, 1.6, .5, 1);
+  --animate-draw: draw .4s .3s ease forwards;
+  --animate-shake: shake-x .35s ease;
+  --animate-chip: chip .3s ease;
+  --animate-sheet-up: sheet-up .4s cubic-bezier(.2, .9, .3, 1);
+  --animate-sheet-in: sheet-in .4s cubic-bezier(.2, .9, .3, 1);
+  --animate-shine: shine 4s 2s ease-in-out infinite;
+  --animate-tick: tick .45s cubic-bezier(.2, .8, .2, 1);
+  --animate-fall: fall linear forwards;
+}
+
+/* Keyframes fuera de @theme: Tailwind solo emite los de @theme cuando se usa su --animate-*,
+   y estos también se usan desde style o animate-[…] */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes card-in { from { opacity: 0; transform: translateY(18px) scale(.985); } }
+@keyframes seat-in { from { opacity: 0; transform: translateY(-14px) scale(.4); } }
+@keyframes wiggle {
+  0%, 90%, 100% { transform: rotate(0); }
+  93% { transform: rotate(-6deg); }
+  96% { transform: rotate(5deg); }
+}
+@keyframes fill { from { transform: scaleX(0); } }
+@keyframes pop { from { transform: scale(0); } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes shake-x {
+  25% { transform: translateX(-6px); }
+  50% { transform: translateX(6px); }
+  75% { transform: translateX(-3px); }
+}
+@keyframes chip { from { opacity: 0; transform: scale(.7); } }
+@keyframes sheet-up { from { transform: translateY(100%); } }
+@keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }
+@keyframes shine { 0%, 70% { left: -60%; } 100% { left: 130%; } }
+@keyframes tick { from { transform: translateY(-45%); opacity: 0; } }
+@keyframes fall { to { transform: translate(var(--dx), 105vh) rotate(var(--rot)); } }
+@keyframes logo-in { from { opacity: 0; transform: scale(.4) rotate(-14deg); } }
+@keyframes bob { 50% { transform: translateY(-4px) rotate(2deg); } }
+@keyframes ray { to { stroke-dashoffset: 0; } }
+/* Mapa de asientos */
+@keyframes stage-in { from { opacity: 0; transform: translateY(-12px) scaleX(.6); letter-spacing: .1em; } }
+@keyframes band-in { from { opacity: 0; transform: scaleY(.6); } }
+@keyframes dash { from { clip-path: inset(0 50% 0 50%); } }
+/* Inicio: hero y formulario */
+@keyframes hero-in { from { opacity: 0; transform: scale(.97); } }
+@keyframes form-in { from { opacity: 0; transform: translateY(34px); } }
+@keyframes line-up { from { transform: translateY(110%); } }
+@keyframes beam-on { to { opacity: 1; } }
+@keyframes sway {
+  0%, 100% { transform: rotate(var(--a)); }
+  50% { transform: rotate(calc(var(--a) * -.55)); }
+}
+@keyframes floor { 50% { opacity: .55; transform: scaleX(.92); } }
+@keyframes float {
+  0% { transform: translateY(0); opacity: 0; }
+  15% { opacity: var(--o); }
+  85% { opacity: var(--o); }
+  100% { transform: translateY(calc(-1 * var(--h))); opacity: 0; }
+}
+@keyframes glow { 50% { opacity: .45; } }
+
+/* ============ Base ============ */
+@layer base {
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color .35s ease, color .35s ease;
+  }
+  button:not(:disabled), [role="button"]:not([aria-disabled="true"]) { cursor: pointer; }
+  :focus-visible { outline: 2.5px solid var(--color-cyan-strong); outline-offset: 2px; border-radius: 10px; }
+}
+
+/* ============ Movimiento reducido: se apaga todo ============ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}

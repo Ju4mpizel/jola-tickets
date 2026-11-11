@@ -16,7 +16,7 @@ import { EVENT, HOLD_MINUTES, MAX_SEATS, ROWS, SEATS_PER_ROW, isVipRow, priceFor
 import { normalizeName, validateBuyer } from '@/lib/validators';
 
 const STORAGE_KEY = 'jola-mock-db';
-const DB_VERSION = 2; // subir cuando cambie el estado inicial, para regenerarlo
+const DB_VERSION = 3; // subir cuando cambie el estado inicial, para regenerarlo
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const FILE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 /**
@@ -45,6 +45,97 @@ const SAMPLE_REJECT_REASON = 'No encontramos una transferencia con este código 
 const LATENCY_MIN = 350;
 const LATENCY_SPREAD = 100;
 
+/* ============ Directiva simulada ============ */
+
+/** Única cuenta de la directiva en modo simulado. */
+const MOCK_ADMIN = { email: 'admin@jola.test', password: 'jola1234' };
+/** Duración de la sesión simulada (como un JWT de Supabase renovado). */
+const SESSION_MS = 8 * 60 * 60_000;
+/** Comprobantes de hasta este tamaño se guardan para verlos desde /admin aunque se recargue. */
+const MAX_STORED_RECEIPT = 1.5 * 1024 * 1024;
+
+/** Comprobante de ejemplo como imagen (SVG). */
+function sampleReceiptSvg({ bank, amount, code, date }) {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="420" height="640" viewBox="0 0 420 640">' +
+    '<rect width="420" height="640" fill="#F4F7FB"/>' +
+    '<rect x="0" y="0" width="420" height="96" fill="#0B6E4F"/>' +
+    `<text x="28" y="58" font-family="sans-serif" font-size="26" font-weight="700" fill="#fff">${bank}</text>` +
+    '<text x="28" y="150" font-family="sans-serif" font-size="18" fill="#56638A">Transferencia exitosa</text>' +
+    `<text x="28" y="205" font-family="sans-serif" font-size="40" font-weight="800" fill="#0B1B48">Bs ${amount}.00</text>` +
+    '<text x="28" y="270" font-family="sans-serif" font-size="15" fill="#56638A">Destino</text>' +
+    '<text x="28" y="296" font-family="sans-serif" font-size="18" font-weight="700" fill="#0B1B48">Joy of Learning Academy</text>' +
+    '<text x="28" y="346" font-family="sans-serif" font-size="15" fill="#56638A">Glosa</text>' +
+    `<text x="28" y="372" font-family="sans-serif" font-size="18" font-weight="700" fill="#0B1B48">${code}</text>` +
+    '<text x="28" y="422" font-family="sans-serif" font-size="15" fill="#56638A">Fecha</text>' +
+    `<text x="28" y="448" font-family="sans-serif" font-size="18" font-weight="700" fill="#0B1B48">${date}</text>` +
+    '<text x="210" y="600" text-anchor="middle" font-family="sans-serif" font-size="16" font-weight="700" fill="#E0445F">COMPROBANTE DE EJEMPLO</text>' +
+    '</svg>';
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+/** Comprobante de ejemplo como PDF de una página. */
+function sampleReceiptPdf(code, amount) {
+  const text = `BT /F1 18 Tf 40 140 Td (Comprobante de ejemplo) Tj 0 -30 Td (Glosa: ${code}) Tj 0 -30 Td (Monto: Bs ${amount}.00) Tj ET`;
+  const pdf = [
+    '%PDF-1.4',
+    '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj',
+    '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
+    '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 360 220]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj',
+    `4 0 obj<</Length ${text.length}>>stream`,
+    text,
+    'endstream endobj',
+    '5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj',
+    'trailer<</Root 1 0 R>>',
+    '%%EOF',
+  ].join('\n');
+  return `data:application/pdf;base64,${btoa(pdf)}`;
+}
+
+/**
+ * Tres órdenes de ejemplo en revisión, con sus comprobantes. La de Carlos (Bs 130, con PDF)
+ * devuelve email_sent: false al aprobarla, para probar "Reenviar correo".
+ */
+function seedOrders(db) {
+  const t = now();
+  const free = (row, count) => db.seats.filter((s) => s.row === row && s.status === 'available').slice(0, count);
+  const examples = [
+    { name: 'María Fernanda Rojas', phone: '70123456', email: 'maria.rojas@example.com', seats: free('E', 2), minutes: 12, kind: 'svg', bank: 'Banco Unión' },
+    { name: 'Carlos Quispe Mamani', phone: '61234567', email: 'carlos.quispe@example.com', seats: [...free('B', 2), ...free('G', 1)], minutes: 35, kind: 'pdf', emailFails: true },
+    { name: 'Lucía Mendoza', phone: '71239876', email: 'lucia.mendoza@example.com', seats: free('F', 1), minutes: 125, kind: 'svg', bank: 'BNB' },
+  ];
+  examples.forEach((ex, i) => {
+    const id = `ejemplo-${i + 1}`;
+    const code = ['JOLA-7C21A4', 'JOLA-3F9B0E', 'JOLA-A84D2C'][i];
+    const total = ex.seats.reduce((sum, s) => sum + s.price, 0);
+    const submitted = t - ex.minutes * 60_000;
+    const date = new Date(submitted).toLocaleString('es-BO', { dateStyle: 'short', timeStyle: 'short' });
+    db.orders[id] = {
+      id,
+      order_code: code,
+      access_token: `token-${id}`,
+      buyer_name: ex.name,
+      buyer_phone: ex.phone,
+      buyer_email: ex.email,
+      seat_ids: ex.seats.map((s) => s.id),
+      total_amount: total,
+      payment_method: 'qr',
+      receipt_name: ex.kind === 'pdf' ? 'comprobante.pdf' : 'captura.png',
+      receipt_data: ex.kind === 'pdf' ? sampleReceiptPdf(code, total) : sampleReceiptSvg({ bank: ex.bank, amount: total, code, date }),
+      status: 'pending_review',
+      expires_at: submitted,
+      reject_reason: null,
+      reviewed_by: null,
+      reviewed_at: null,
+      submitted_at: submitted,
+      created_at: submitted - 4 * 60_000,
+      email_sent: null,
+      email_fails: !!ex.emailFails,
+    };
+    ex.seats.forEach((s) => Object.assign(s, { status: 'pending_review', held_until: null, order_id: id }));
+  });
+}
+
 /* ============ Estado ============ */
 
 function seedDb() {
@@ -66,12 +157,31 @@ function seedDb() {
       });
     }
   });
-  return { version: DB_VERSION, seats, orders: {}, tickets: {} };
+  const db = { version: DB_VERSION, seats, orders: {}, tickets: {}, admin_tokens: {} };
+  seedOrders(db);
+  return db;
 }
 
 let memoryDb = null;
-/** URLs locales (blob:) de los comprobantes subidos en esta pestaña. */
+/** URLs locales (blob:) de los comprobantes, creadas al listarlos (se pueden abrir en otra pestaña). */
 const receiptUrls = new Map();
+
+/** data: URL → Blob (para abrir el comprobante en otra pestaña: los data: URL de nivel superior están bloqueados). */
+function dataUrlToBlob(dataUrl) {
+  const [head, body] = dataUrl.split(',');
+  const type = head.slice(5).split(';')[0];
+  if (head.endsWith(';base64')) {
+    const bin = atob(body);
+    return new Blob([Uint8Array.from(bin, (c) => c.charCodeAt(0))], { type });
+  }
+  return new Blob([decodeURIComponent(body)], { type });
+}
+
+function receiptUrl(order) {
+  if (!order.receipt_data || typeof URL === 'undefined' || !URL.createObjectURL) return null;
+  if (!receiptUrls.has(order.id)) receiptUrls.set(order.id, URL.createObjectURL(dataUrlToBlob(order.receipt_data)));
+  return receiptUrls.get(order.id);
+}
 
 function load() {
   if (typeof window === 'undefined') return (memoryDb ??= seedDb());
@@ -129,12 +239,12 @@ function findOrder(db, orderId, token) {
   return order && order.access_token === token ? order : null;
 }
 
-function requireAdmin(headers) {
+function requireAdmin(db, headers) {
   const auth = headers.Authorization || '';
-  // En modo simulado cualquier token no vacío cuenta como sesión de la directiva
-  if (!auth.startsWith('Bearer ') || !auth.slice(7).trim()) {
-    return fail(401, 'UNAUTHORIZED', 'Inicia sesión para continuar');
-  }
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  // Como el servidor real: solo vale un token emitido al iniciar sesión y vigente
+  const expires = db.admin_tokens?.[token];
+  if (!token || !expires || expires < now()) return fail(401, 'UNAUTHORIZED', 'Inicia sesión para continuar');
   return null;
 }
 
@@ -219,7 +329,7 @@ function releaseHold(db, orderId, headers) {
   return ok(null, 204);
 }
 
-function submitReceipt(db, orderId, headers, body) {
+function submitReceipt(db, orderId, headers, body, receiptData) {
   const file = typeof FormData !== 'undefined' && body instanceof FormData ? body.get('file') : null;
   if (!file || typeof file === 'string') return fail(400, 'INVALID_DATA', 'Adjunta la captura de tu comprobante');
   if (!FILE_TYPES.includes(file.type)) return fail(415, 'FILE_TYPE', 'Sube una imagen o PDF de máximo 4 MB');
@@ -234,8 +344,13 @@ function submitReceipt(db, orderId, headers, body) {
   if (held.length !== order.seat_ids.length) return fail(410, 'HOLD_EXPIRED', 'Se acabó el tiempo de reserva');
 
   held.forEach((s) => Object.assign(s, { status: 'pending_review', held_until: null }));
-  Object.assign(order, { status: 'pending_review', receipt_name: file.name || 'comprobante', submitted_at: now() });
-  if (typeof URL !== 'undefined' && URL.createObjectURL) receiptUrls.set(orderId, URL.createObjectURL(file));
+  Object.assign(order, {
+    status: 'pending_review',
+    receipt_name: file.name || 'comprobante',
+    receipt_data: receiptData ?? null,
+    submitted_at: now(),
+  });
+  if (!receiptData && typeof URL !== 'undefined' && URL.createObjectURL) receiptUrls.set(orderId, URL.createObjectURL(file));
   save(db);
   return ok({ order_code: order.order_code, status: 'pending_review' });
 }
@@ -263,6 +378,7 @@ function getTicket(db, token) {
     row: seat.row,
     number: seat.number,
     is_used: t.is_used,
+    scanned_at: iso(t.scanned_at), // a acordar con el backend: hora de ingreso para "Ya ingresó"
     event: { name: EVENT.name, starts_at: EVENT.startsAt, place: EVENT.place },
   });
 }
@@ -283,7 +399,9 @@ function listOrders(db, status) {
       seats: orderSeats(db, o).map(seatRef),
       total: o.total_amount,
       payment_method: o.payment_method,
-      receipt_url: receiptUrls.get(o.id) ?? null,
+      receipt_url: receiptUrls.get(o.id) ?? receiptUrl(o),
+      receipt_name: o.receipt_name, // a acordar con el backend: sirve para saber si es PDF
+      email_sent: o.email_sent ?? null,
       submitted_at: iso(o.submitted_at),
       created_at: iso(o.created_at),
       reviewed_at: iso(o.reviewed_at),
@@ -295,7 +413,9 @@ function listOrders(db, status) {
 function approveOrder(db, orderId) {
   const order = db.orders[orderId];
   if (!order || order.status !== 'pending_review') return fail(409, 'ORDER_NOT_PENDING', 'Esta orden ya fue procesada');
-  Object.assign(order, { status: 'approved', reviewed_by: 'directiva@mock', reviewed_at: now() });
+  // Una orden de ejemplo simula que EmailJS falló: la aprobación igual queda hecha
+  const emailSent = !order.email_fails;
+  Object.assign(order, { status: 'approved', reviewed_by: MOCK_ADMIN.email, reviewed_at: now(), email_sent: emailSent });
   db.seats.forEach((s) => {
     if (s.order_id === orderId && s.status === 'pending_review') {
       s.status = 'sold';
@@ -304,7 +424,7 @@ function approveOrder(db, orderId) {
     }
   });
   save(db);
-  return ok({ tickets: orderTickets(db, orderId), email_sent: true });
+  return ok({ tickets: orderTickets(db, orderId), email_sent: emailSent });
 }
 
 function rejectOrder(db, orderId, body) {
@@ -312,7 +432,7 @@ function rejectOrder(db, orderId, body) {
   const reason = (body?.reason || '').trim();
   if (!reason) return fail(400, 'INVALID_DATA', 'Escribe el motivo del rechazo');
   if (!order || order.status !== 'pending_review') return fail(409, 'ORDER_NOT_PENDING', 'Esta orden ya fue procesada');
-  Object.assign(order, { status: 'rejected', reject_reason: reason, reviewed_by: 'directiva@mock', reviewed_at: now() });
+  Object.assign(order, { status: 'rejected', reject_reason: reason, reviewed_by: MOCK_ADMIN.email, reviewed_at: now(), email_sent: true });
   db.seats.forEach((s) => {
     if (s.order_id === orderId) Object.assign(s, { status: 'available', held_until: null, order_id: null });
   });
@@ -324,6 +444,9 @@ function resendEmail(db, orderId) {
   const order = db.orders[orderId];
   if (!order) return fail(404, 'ORDER_NOT_FOUND', 'No encontramos la orden');
   if (order.status !== 'approved') return fail(409, 'ORDER_NOT_PENDING', 'La orden todavía no está aprobada');
+  // El reenvío funciona aunque el primer envío haya fallado
+  Object.assign(order, { email_sent: true, email_fails: false });
+  save(db);
   return ok({ email_sent: true });
 }
 
@@ -363,7 +486,30 @@ function getStats(db) {
     sold: db.seats.filter((s) => s.status === 'sold').length,
     pending_review: orders.filter((o) => o.status === 'pending_review').length,
     revenue: orders.filter((o) => o.status === 'approved').reduce((sum, o) => sum + o.total_amount, 0),
+    // a acordar con el backend: boletos que ya ingresaron (contador de la puerta)
+    checked_in: Object.values(db.tickets).filter((t) => t.is_used).length,
   });
+}
+
+/**
+ * GET /admin/seats: mapa detallado que solo ve la directiva. Una retención vencida cuenta como libre
+ * (igual que en el mapa público); order_code solo en sillas con orden (retenida, en revisión o vendida).
+ */
+function adminSeats(db) {
+  return ok(
+    db.seats.map((s) => {
+      const status = s.status === 'held' && s.held_until < now() ? 'available' : s.status;
+      const order = status !== 'available' && status !== 'blocked' ? db.orders[s.order_id] : null;
+      return {
+        id: s.id,
+        row: s.row,
+        number: s.number,
+        vip: s.vip,
+        status,
+        ...(order ? { order_code: order.order_code } : {}),
+      };
+    }),
+  );
 }
 
 /* ============ Enrutador ============ */
@@ -372,7 +518,7 @@ const ROUTES = [
   ['GET', /^\/seats$/, (db) => getSeats(db)],
   ['POST', /^\/holds$/, (db, req) => createHold(db, req.body)],
   ['DELETE', /^\/holds\/([^/]+)$/, (db, req, [id]) => releaseHold(db, id, req.headers)],
-  ['POST', /^\/orders\/([^/]+)\/receipt$/, (db, req, [id]) => submitReceipt(db, id, req.headers, req.body)],
+  ['POST', /^\/orders\/([^/]+)\/receipt$/, (db, req, [id]) => submitReceipt(db, id, req.headers, req.body, req.receiptData)],
   ['GET', /^\/orders\/([^/]+)$/, (db, req, [id]) => getOrder(db, id, req.headers)],
   ['GET', /^\/tickets\/([^/]+)$/, (db, req, [token]) => getTicket(db, token)],
   ['GET', /^\/admin\/orders$/, (db, req) => listOrders(db, req.query.get('status')), true],
@@ -382,7 +528,22 @@ const ROUTES = [
   ['POST', /^\/admin\/check-in$/, (db, req) => checkIn(db, req.body), true],
   ['POST', /^\/admin\/seats\/block$/, (db, req) => blockSeats(db, req.body), true],
   ['GET', /^\/admin\/stats$/, (db) => getStats(db), true],
+  ['GET', /^\/admin\/seats$/, (db) => adminSeats(db), true],
 ];
+
+/** El comprobante como data: URL si es chico (así /admin lo ve aunque se recargue la página). */
+function readSmallFile(body) {
+  const file = typeof FormData !== 'undefined' && body instanceof FormData ? body.get('file') : null;
+  if (!file || typeof file === 'string' || file.size > MAX_STORED_RECEIPT || typeof FileReader === 'undefined') {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
 
 /** Subida simulada: avisa el avance en pasos y tarda UPLOAD_MS. */
 async function simulateUpload(onProgress, signal) {
@@ -416,8 +577,11 @@ function wait(ms, signal) {
  */
 export async function mockFetch(method, path, { body, headers = {}, signal, onProgress } = {}) {
   const isUpload = method === 'POST' && /^\/orders\/[^/]+\/receipt$/.test(path);
-  if (isUpload) await simulateUpload(onProgress, signal);
-  else await wait(LATENCY_MIN + Math.random() * LATENCY_SPREAD, signal);
+  let receiptData = null;
+  if (isUpload) {
+    await simulateUpload(onProgress, signal);
+    receiptData = await readSmallFile(body);
+  } else await wait(LATENCY_MIN + Math.random() * LATENCY_SPREAD, signal);
   if (failuresLeft > 0) {
     failuresLeft--;
     // Sin conexión (status 0) o error del servidor (500)
@@ -431,16 +595,45 @@ export async function mockFetch(method, path, { body, headers = {}, signal, onPr
     const match = pathname.match(re);
     if (!match || m !== method) continue;
     if (isAdmin) {
-      const denied = requireAdmin(headers);
+      const denied = requireAdmin(db, headers);
       if (denied) return denied;
     }
     const params = match.slice(1).map(decodeURIComponent);
     const jsonBody = body && !(typeof FormData !== 'undefined' && body instanceof FormData) ? structuredClone(body) : body;
-    const res = handler(db, { body: jsonBody, headers, query: new URLSearchParams(search) }, params);
+    const res = handler(db, { body: jsonBody, headers, query: new URLSearchParams(search), receiptData }, params);
     return { status: res.status, data: res.data == null ? null : structuredClone(res.data) };
   }
   return fail(404, 'NOT_FOUND', `Ruta simulada inexistente: ${method} ${pathname}`);
 }
+
+/* ============ Inicio de sesión simulado (en lugar de Supabase Auth) ============ */
+
+export const mockAuth = {
+  /**
+   * Acepta solo admin@jola.test / jola1234. Devuelve la sesión como la armaría el login real:
+   * { data: { email, token, expiresAt } } o { error }.
+   */
+  async signIn(email, password) {
+    await wait(LATENCY_MIN + Math.random() * LATENCY_SPREAD);
+    if (String(email).trim().toLowerCase() !== MOCK_ADMIN.email || password !== MOCK_ADMIN.password) {
+      return { error: 'Correo o contraseña incorrectos' };
+    }
+    const db = load();
+    const token = `mock.${hex(24)}`;
+    const expiresAt = now() + SESSION_MS;
+    db.admin_tokens = { ...db.admin_tokens, [token]: expiresAt };
+    save(db);
+    return { data: { email: MOCK_ADMIN.email, token, expiresAt } };
+  },
+  /** Cierra la sesión: el token deja de servir. */
+  async signOut(token) {
+    const db = load();
+    if (db.admin_tokens?.[token]) {
+      delete db.admin_tokens[token];
+      save(db);
+    }
+  },
+};
 
 /* ============ Herramientas para probar desde la consola ============ */
 

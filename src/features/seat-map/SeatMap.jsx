@@ -1,26 +1,25 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import Rays from '@/components/brand/Rays';
 import AnimatedNumber from '@/components/ui/AnimatedNumber';
 import Button from '@/components/ui/Button';
-import { useToast } from '@/components/ui/ToastProvider';
+import { useAnnounce, useToast } from '@/components/ui/ToastProvider';
 import { usePurchaseFlow, useSelection } from '@/context/PurchaseContext';
-import { PRICE_VIP, ROWS, SEATS_PER_ROW, TOTAL_SEATS, formatMoney, seatCode, sortSeatCodes } from '@/lib/event';
+import { MAX_SEATS, PRICE_VIP, ROWS, SEATS_PER_ROW, TOTAL_SEATS, formatMoney, seatCode, sortSeatCodes } from '@/lib/event';
+import { anim, shake, vibrate } from '@/lib/feedback';
 import useMapZoom from './hooks/useMapZoom';
 import useSeats from './hooks/useSeats';
 import MapDock from './MapDock';
+import { ADMIN_STATUS, STATUS_CLASS } from './Seat';
 import SeatGrid, { GRID_CLASS, seatColumn } from './SeatGrid';
 
 const SWATCH = 'size-4 flex-none rounded-[5px] border-[1.5px]';
 
-const LEGEND = [
+const BUYER_LEGEND = [
   { label: 'Disponible', swatch: 'border-line bg-surface' },
   { label: 'Tu selección', swatch: 'border-sel bg-sel' },
-  {
-    label: 'Ocupado',
-    swatch: 'border-transparent bg-[repeating-linear-gradient(135deg,var(--taken)_0_3px,var(--taken-line)_3px_4.5px)]',
-  },
+  { label: 'Ocupado', swatch: STATUS_CLASS.taken },
   { label: `Preferencial · ${formatMoney(PRICE_VIP)}`, swatch: 'border-dashed border-band-line bg-band' },
 ];
 
@@ -32,24 +31,38 @@ function lostSeatsMessage(codes) {
 }
 
 /**
- * Tarjeta del mapa: saludo, título, disponibles, leyenda, escenario, grilla, ayuda y widget de zoom.
- * Pide los asientos con useSeats (se actualizan cada 15 s mientras el mapa está activo).
+ * Tarjeta del mapa: encabezado, leyenda, escenario, grilla, ayuda y widget de zoom.
+ * - mode "buyer" (por defecto): el comprador elige asientos; pide el mapa con useSeats
+ *   (cada 15 s mientras está activo) y guarda la selección en PurchaseContext.
+ * - mode "admin": la directiva ve los cinco estados; los datos, la selección y el clic
+ *   los maneja la página (/admin/asientos).
  * @param {{
- *   titleId: string,    // id del título (recibe el foco al entrar al paso)
- *   active?: boolean,   // false mientras se paga: el mapa queda escondido y sin actualizarse
+ *   titleId: string,            // id del título (recibe el foco al entrar al paso)
+ *   mode?: 'buyer' | 'admin',
+ *   active?: boolean,           // comprador: false mientras se paga (escondido y sin actualizarse)
+ *   seats?: object[], loading?: boolean, error?: Error | null, onRetry?: () => void,   // admin
+ *   selected?: number[], onSeatClick?: (cell: object, button: HTMLElement) => void,     // admin
  * }} props
  */
-export default function SeatMap({ titleId, active = true }) {
+export default function SeatMap(props) {
+  return props.mode === 'admin' ? <AdminSeatMap {...props} /> : <BuyerSeatMap {...props} />;
+}
+
+/* ---------- Comprador ---------- */
+
+function BuyerSeatMap({ titleId, active = true }) {
   const { buyer } = usePurchaseFlow();
-  const { selected, removeSeats } = useSelection();
+  const { selected, toggleSeat, removeSeats } = useSelection();
   const { seats, loading, error, refresh } = useSeats({ active });
   const toast = useToast();
-  const scrollerRef = useRef(null);
-  const gridRef = useRef(null);
+  const announce = useAnnounce();
   const ready = seats.length > 0;
-  const zoom = useMapZoom({ scrollerRef, gridRef, ready });
   const free = seats.filter((s) => s.status === 'available' && !selected.includes(s.id)).length;
   const firstName = buyer?.name.split(' ')[0];
+  const priceById = useMemo(() => new Map(seats.map((s) => [s.id, s.price])), [seats]);
+  // Copia al día de la selección para el total anunciado (varios clics antes de volver a pintar)
+  const liveSelected = useRef(selected);
+  liveSelected.current = selected;
 
   // Si al actualizar el mapa (o al recuperar la selección) una silla elegida ya no está libre, se quita.
   // Solo con el mapa activo: con una orden en curso, las sillas propias figuran ocupadas
@@ -63,25 +76,52 @@ export default function SeatMap({ titleId, active = true }) {
     if (codes.length) toast(lostSeatsMessage(sortSeatCodes(codes)));
   }, [active, seats, selected, ready, removeSeats, toast]);
 
-  const hint = !zoom.measured
-    ? ''
-    : zoom.overflows
-      ? 'Desliza para ver más asientos'
-      : zoom.finePointer
-        ? 'Pasa el cursor sobre un asiento para ver su precio'
-        : 'Acerca el mapa con + para elegir con más comodidad';
+  /** Elegir o quitar una silla: pop, vibración corta y anuncio; ocupada o límite: sacudida y aviso. */
+  const onSeatClick = useCallback(
+    (cell, button) => {
+      if (cell.taken) {
+        shake(button);
+        vibrate([15, 30, 15]);
+        toast('Ese asiento ya está ocupado');
+        return;
+      }
+      const result = toggleSeat(cell.id);
+      if (result === 'limit') {
+        shake(button);
+        toast(`Puedes elegir hasta ${MAX_SEATS} asientos por compra`);
+        return;
+      }
+      liveSelected.current =
+        result === 'added' ? [...liveSelected.current, cell.id] : liveSelected.current.filter((id) => id !== cell.id);
+      if (result === 'removed') {
+        anim(button, [{ transform: 'scale(.88)' }, { transform: 'scale(1)' }], { duration: 200, easing: 'ease-out' });
+        announce(`Asiento ${cell.code} liberado`);
+        return;
+      }
+      anim(button, [{ transform: 'scale(1)' }, { transform: 'scale(1.15)' }, { transform: 'scale(1)' }], {
+        duration: 300,
+        easing: 'cubic-bezier(.3,1.5,.5,1)',
+      });
+      vibrate(10);
+      // Total solo informativo: el que se cobra lo calcula el servidor
+      const total = liveSelected.current.reduce((sum, id) => sum + (priceById.get(id) ?? 0), 0);
+      announce(`Asiento ${cell.code} seleccionado. Total ${formatMoney(total)}`);
+    },
+    [toggleSeat, toast, announce, priceById],
+  );
 
   return (
-    <section
-      aria-labelledby={titleId}
-      aria-busy={loading || undefined}
-      className={
-        'relative animate-card-in rounded-card border border-line bg-surface px-3 pt-[18px] pb-4 shadow-elev ' +
-        'transition-colors duration-300 sm:px-[22px] sm:pt-[22px]'
-      }
-    >
-      <div className="mb-3 flex animate-[rise_.5s_.25s_ease_both] items-center justify-between gap-3 px-1">
-        <div>
+    <SeatMapView
+      titleId={titleId}
+      seats={seats}
+      loading={loading}
+      error={error}
+      onRetry={refresh}
+      selected={selected}
+      onSeatClick={onSeatClick}
+      legend={BUYER_LEGEND}
+      header={
+        <>
           {firstName && <span className="mb-0.5 block text-[.8rem] font-extrabold text-accent-ink">Hola, {firstName}</span>}
           <h2 id={titleId} tabIndex={-1} className="text-[1.1rem] font-extrabold focus:outline-none">
             Elige tus asientos
@@ -96,13 +136,81 @@ export default function SeatMap({ titleId, active = true }) {
             )}{' '}
             de {TOTAL_SEATS} disponibles
           </p>
-        </div>
+        </>
+      }
+      hints={{ fine: 'Pasa el cursor sobre un asiento para ver su precio', touch: 'Acerca el mapa con + para elegir con más comodidad' }}
+    />
+  );
+}
+
+/* ---------- Directiva ---------- */
+
+function AdminSeatMap({ titleId, seats = [], loading = false, error = null, onRetry, selected = [], onSeatClick }) {
+  // Leyenda con los cinco estados y cuántas sillas hay en cada uno
+  const legend = useMemo(() => {
+    const counts = Object.fromEntries(Object.keys(ADMIN_STATUS).map((k) => [k, 0]));
+    seats.forEach((s) => {
+      if (s.status in counts) counts[s.status] += 1;
+    });
+    return Object.entries(ADMIN_STATUS).map(([status, label]) => ({
+      label: `${label} · ${counts[status]}`,
+      swatch: status === 'available' ? 'border-line bg-surface' : STATUS_CLASS[status],
+    }));
+  }, [seats]);
+
+  return (
+    <SeatMapView
+      titleId={titleId}
+      admin
+      seats={seats}
+      loading={loading}
+      error={error}
+      onRetry={onRetry}
+      selected={selected}
+      onSeatClick={onSeatClick}
+      legend={legend}
+      header={
+        <>
+          <h1 id={titleId} tabIndex={-1} className="text-[1.2rem] font-extrabold focus:outline-none">
+            Mapa de asientos
+          </h1>
+          <p className="mt-0.5 text-[.82rem] font-semibold text-muted">
+            Toca una silla vendida o en revisión para ver su orden; marca libres o bloqueadas para cambiarlas.
+          </p>
+        </>
+      }
+      hints={{ fine: 'Pasa el cursor sobre una silla para ver su estado', touch: 'Acerca el mapa con + para tocar las sillas con comodidad' }}
+    />
+  );
+}
+
+/* ---------- Vista compartida ---------- */
+
+function SeatMapView({ titleId, admin = false, seats, loading, error, onRetry, selected, onSeatClick, legend, header, hints }) {
+  const scrollerRef = useRef(null);
+  const gridRef = useRef(null);
+  const ready = seats.length > 0;
+  const zoom = useMapZoom({ scrollerRef, gridRef, ready });
+
+  const hint = !zoom.measured ? '' : zoom.overflows ? 'Desliza para ver más asientos' : zoom.finePointer ? hints.fine : hints.touch;
+
+  return (
+    <section
+      aria-labelledby={titleId}
+      aria-busy={loading || undefined}
+      className={
+        'relative animate-card-in rounded-card border border-line bg-surface px-3 pt-[18px] pb-4 shadow-elev ' +
+        'transition-colors duration-300 sm:px-[22px] sm:pt-[22px]'
+      }
+    >
+      <div className="mb-3 flex animate-[rise_.5s_.25s_ease_both] items-center justify-between gap-3 px-1">
+        <div>{header}</div>
       </div>
 
       <ul aria-label="Leyenda" className="mb-[22px] flex list-none flex-wrap gap-x-4 gap-y-2 px-1">
-        {LEGEND.map((item, i) => (
+        {legend.map((item, i) => (
           <li
-            key={item.label}
+            key={i}
             style={{ animationDelay: `${0.3 + i * 0.06}s` }}
             className="flex animate-[rise_.4s_ease_both] items-center gap-[7px] text-[.8rem] font-bold text-muted"
           >
@@ -119,9 +227,19 @@ export default function SeatMap({ titleId, active = true }) {
         className="overflow-x-auto overflow-y-hidden px-1 pt-2.5 pb-2 [contain:layout_paint] [scrollbar-color:var(--line)_transparent] [scrollbar-width:thin] [-webkit-overflow-scrolling:touch]"
       >
         {ready ? (
-          <SeatGrid ref={gridRef} seats={seats} zoom={zoom.zoom} tiny={zoom.tiny} animateZoom={zoom.animate} finePointer={zoom.finePointer} />
+          <SeatGrid
+            ref={gridRef}
+            seats={seats}
+            selected={selected}
+            onSeatClick={onSeatClick}
+            admin={admin}
+            zoom={zoom.zoom}
+            tiny={zoom.tiny}
+            animateZoom={zoom.animate}
+            finePointer={zoom.finePointer}
+          />
         ) : error && !loading ? (
-          <LoadError message={error.message} onRetry={refresh} />
+          <LoadError message={error.message} onRetry={onRetry} />
         ) : (
           <SkeletonGrid />
         )}

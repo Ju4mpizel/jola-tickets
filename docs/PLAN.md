@@ -358,6 +358,7 @@ El frontend solo conoce estas rutas, con el prefijo `/api/v1`. En la Versión A 
 | POST | `/admin/orders/{id}/resend` | — | `{email_sent}`; reenvía el correo de una orden aprobada | lectura directa |
 | POST | `/admin/check-in` | `{token}` | `{result, buyer_name, row, number, scanned_at}` | `check_in` |
 | POST | `/admin/seats/block` | `{seat_ids, blocked}` | `{changed}` | `set_seats_blocked` |
+| GET | `/admin/seats` | — | `[{id, row, number, vip, status, order_code?}]`, `status` = `available`, `held`, `pending_review`, `sold` o `blocked` (vista detallada solo para la directiva) | lectura directa |
 | GET | `/admin/stats` | — | vendidos, en revisión, recaudado | lectura directa |
 
 ### Errores

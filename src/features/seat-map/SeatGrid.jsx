@@ -2,12 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { useAnnounce, useToast } from '@/components/ui/ToastProvider';
-import { useSelection } from '@/context/PurchaseContext';
-import { anim, shake, vibrate } from '@/lib/feedback';
-import { AISLE_AFTER, MAX_SEATS, ROWS, SEATS_PER_ROW, VIP_ROWS, formatMoney, seatCode } from '@/lib/event';
+import { AISLE_AFTER, ROWS, SEATS_PER_ROW, VIP_ROWS, formatMoney, seatCode } from '@/lib/event';
 import useRovingGrid from './hooks/useRovingGrid';
-import Seat, { seatLabel } from './Seat';
+import Seat, { ADMIN_STATUS, seatLabel } from './Seat';
 
 /**
  * Plantilla de la grilla: letra | 10 sillas | pasillo | 10 sillas | letra.
@@ -39,8 +36,13 @@ const ROW_LABEL =
  * Grilla de 9 filas × 20 sillas con pasillo central, letras de fila fijas a ambos lados
  * y la franja punteada de preferencial detrás de las filas A y B.
  * Un solo onClick por delegación, teclado con useRovingGrid y tooltip solo en PC.
+ * No sabe de compras: la selección y qué hacer al tocar una silla vienen por props
+ * (el comprador elige asientos; la directiva marca sillas para bloquear o ve su orden).
  * @param {{
- *   seats: { id: number, row: string, number: number, price: number, vip: boolean, status: string }[],
+ *   seats: { id: number, row: string, number: number, price?: number, vip: boolean, status: string, order_code?: string }[],
+ *   selected: number[],
+ *   onSeatClick: (cell: object, button: HTMLButtonElement) => void,   // cell: la silla con code, r, c, taken…
+ *   admin?: boolean,         // cinco estados (GET /admin/seats) en lugar de libre / ocupado
  *   zoom?: number,
  *   tiny?: boolean,          // sillas de menos de 20 px: se ocultan los números
  *   animateZoom?: boolean,   // el cambio de zoom lo pidió el usuario: con transición
@@ -48,16 +50,20 @@ const ROW_LABEL =
  *   ref?: React.RefObject<HTMLDivElement>,   // lo usa useMapZoom para medir las sillas
  * }} props
  */
-export default function SeatGrid({ seats, zoom = 1, tiny = false, animateZoom = false, finePointer = false, ref }) {
+export default function SeatGrid({
+  seats,
+  selected,
+  onSeatClick,
+  admin = false,
+  zoom = 1,
+  tiny = false,
+  animateZoom = false,
+  finePointer = false,
+  ref,
+}) {
   const ownRef = useRef(null);
   const gridRef = ref ?? ownRef;
   const tipRef = useRef(null);
-  const { selected, toggleSeat } = useSelection();
-  // Copia al día de la selección para el total anunciado (varios clics antes de volver a pintar)
-  const liveSelected = useRef(selected);
-  liveSelected.current = selected;
-  const toast = useToast();
-  const announce = useAnnounce();
 
   // Sillas ordenadas por fila y número, con su posición en la grilla
   const cells = useMemo(
@@ -66,20 +72,27 @@ export default function SeatGrid({ seats, zoom = 1, tiny = false, animateZoom = 
         .filter((s) => ROWS.includes(s.row) && s.number >= 1 && s.number <= SEATS_PER_ROW)
         .map((s) => {
           const taken = s.status !== 'available';
+          const code = seatCode(s.row, s.number);
+          const state = ADMIN_STATUS[s.status] ?? s.status;
           return {
             ...s,
             r: ROWS.indexOf(s.row),
             c: s.number - 1,
-            code: seatCode(s.row, s.number),
+            code,
             taken,
-            status: taken ? 'taken' : 'available',
-            label: seatLabel({ ...s, taken }),
+            status: admin ? s.status : taken ? 'taken' : 'available',
+            label: admin
+              ? `Fila ${s.row}, asiento ${s.number}, ${state.toLowerCase()}${s.order_code ? `, orden ${s.order_code}` : ''}`
+              : seatLabel({ ...s, taken }),
+            tip: admin
+              ? `${code} · ${state}${s.order_code ? ` · ${s.order_code}` : ''}`
+              : `Fila ${s.row} · Asiento ${s.number} · ${taken ? 'Ocupado' : formatMoney(s.price)}`,
             column: seatColumn(s.number),
             dist: Math.round(Math.abs(s.number - 1 - (SEATS_PER_ROW - 1) / 2)),
           };
         })
         .sort((a, b) => a.r - b.r || a.number - b.number),
-    [seats],
+    [seats, admin],
   );
   const byId = useMemo(() => new Map(cells.map((s) => [s.id, s])), [cells]);
   const byPos = useMemo(() => new Map(cells.map((s) => [`${s.r}:${s.c}`, s])), [cells]);
@@ -96,40 +109,13 @@ export default function SeatGrid({ seats, zoom = 1, tiny = false, animateZoom = 
   // Solo la primera silla nace enfocable; después useRovingGrid mueve el tabIndex por el DOM
   const firstId = cells[0]?.id;
 
-  /** Elegir o quitar una silla (clic, toque, Enter o Espacio). */
+  /** Clic, toque, Enter o Espacio sobre una silla: lo resuelve quien usa la grilla. */
   function handleClick(e) {
     const button = e.target.closest('[data-seat-id]');
     const cell = button && byId.get(Number(button.dataset.seatId));
     if (!cell) return;
     setFocus(cell.r, cell.c, false);
-
-    if (cell.taken) {
-      shake(button);
-      vibrate([15, 30, 15]);
-      toast('Ese asiento ya está ocupado');
-      return;
-    }
-    const result = toggleSeat(cell.id);
-    if (result === 'limit') {
-      shake(button);
-      toast(`Puedes elegir hasta ${MAX_SEATS} asientos por compra`);
-      return;
-    }
-    liveSelected.current =
-      result === 'added' ? [...liveSelected.current, cell.id] : liveSelected.current.filter((id) => id !== cell.id);
-    if (result === 'removed') {
-      anim(button, [{ transform: 'scale(.88)' }, { transform: 'scale(1)' }], { duration: 200, easing: 'ease-out' });
-      announce(`Asiento ${cell.code} liberado`);
-      return;
-    }
-    anim(button, [{ transform: 'scale(1)' }, { transform: 'scale(1.15)' }, { transform: 'scale(1)' }], {
-      duration: 300,
-      easing: 'cubic-bezier(.3,1.5,.5,1)',
-    });
-    vibrate(10);
-    // Total solo informativo: el que se cobra lo calcula el servidor
-    const total = liveSelected.current.reduce((sum, id) => sum + (byId.get(id)?.price ?? 0), 0);
-    announce(`Asiento ${cell.code} seleccionado. Total ${formatMoney(total)}`);
+    onSeatClick(cell, button);
   }
 
   /* ---------- Tooltip (solo PC): se mueve por el DOM para no volver a pintar la grilla ---------- */
@@ -141,7 +127,7 @@ export default function SeatGrid({ seats, zoom = 1, tiny = false, animateZoom = 
     const cell = button && byId.get(Number(button.dataset.seatId));
     if (!tip || !cell) return;
     const rect = button.getBoundingClientRect();
-    tip.textContent = `Fila ${cell.row} · Asiento ${cell.number} · ${cell.taken ? 'Ocupado' : formatMoney(cell.price)}`;
+    tip.textContent = cell.tip;
     tip.style.left = `${rect.left + rect.width / 2}px`;
     tip.style.top = `${rect.top}px`;
     tip.classList.add('opacity-100');
@@ -160,7 +146,7 @@ export default function SeatGrid({ seats, zoom = 1, tiny = false, animateZoom = 
     <div
       ref={gridRef}
       role="group"
-      aria-label="Asientos. El escenario está al frente. Usa las flechas para moverte y Enter para elegir."
+      aria-label={`Asientos. El escenario está al frente. Usa las flechas para moverte y Enter para ${admin ? 'ver o marcar' : 'elegir'}.`}
       data-tiny={tiny}
       style={{ '--zoom': zoom }}
       className={`group/grid ${GRID_CLASS} ${animateZoom ? ZOOM_TRANSITION : ''}`}
@@ -188,6 +174,7 @@ export default function SeatGrid({ seats, zoom = 1, tiny = false, animateZoom = 
           label={s.label}
           status={s.status}
           selected={selectedSet.has(s.id)}
+          disabled={!admin && s.taken}
           vip={s.vip}
           gridRow={s.r + 1}
           gridColumn={s.column}

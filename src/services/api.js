@@ -185,6 +185,70 @@ export async function devSimulateReview(orderId, outcome) {
   mockTools.review(orderId, outcome);
 }
 
+/* ============ Sesión de la directiva ============ */
+
+const MOCK_SESSION_KEY = 'jola-admin-session';
+
+/**
+ * Inicio de sesión de la directiva. Modo real: Supabase Auth con supabaseBrowser (se carga
+ * solo al usarse). Modo simulado: mocks.js (admin@jola.test / jola1234).
+ * La sesión es { email, token, expiresAt }; el token va como Authorization: Bearer en /admin/*.
+ */
+export const adminAuth = {
+  /** @returns {Promise<{ email: string, token: string, expiresAt: number }>}  o lanza ApiError UNAUTHORIZED */
+  async signIn(email, password) {
+    if (USE_MOCKS) {
+      const { mockAuth } = await import('./mocks');
+      const { data, error } = await mockAuth.signIn(email, password);
+      if (error) throw new ApiError(401, 'UNAUTHORIZED', error);
+      try {
+        sessionStorage.setItem(MOCK_SESSION_KEY, JSON.stringify(data));
+      } catch {
+        /* sin almacenamiento: la sesión dura lo que la pestaña */
+      }
+      return data;
+    }
+    const { getSupabase } = await import('./supabaseBrowser');
+    const { data, error } = await getSupabase().auth.signInWithPassword({ email, password });
+    if (error || !data.session) {
+      const network = error?.status === 0 || /fetch/i.test(error?.message || '');
+      throw new ApiError(network ? 0 : 401, network ? 'NETWORK_ERROR' : 'UNAUTHORIZED', network ? undefined : 'Correo o contraseña incorrectos');
+    }
+    return { email: data.user.email, token: data.session.access_token, expiresAt: data.session.expires_at * 1000 };
+  },
+
+  /** Sesión vigente (con el token ya renovado en modo real) o null. */
+  async getSession() {
+    if (USE_MOCKS) {
+      try {
+        const s = JSON.parse(sessionStorage.getItem(MOCK_SESSION_KEY) || 'null');
+        return s && s.expiresAt > Date.now() ? s : null;
+      } catch {
+        return null;
+      }
+    }
+    const { getSupabase } = await import('./supabaseBrowser');
+    const { data } = await getSupabase().auth.getSession();
+    const s = data.session;
+    return s ? { email: s.user.email, token: s.access_token, expiresAt: s.expires_at * 1000 } : null;
+  },
+
+  async signOut(token) {
+    if (USE_MOCKS) {
+      try {
+        sessionStorage.removeItem(MOCK_SESSION_KEY);
+      } catch {
+        /* nada que borrar */
+      }
+      const { mockAuth } = await import('./mocks');
+      await mockAuth.signOut(token);
+      return;
+    }
+    const { getSupabase } = await import('./supabaseBrowser');
+    await getSupabase().auth.signOut();
+  },
+};
+
 /* ============ Directiva (requiere el JWT de Supabase Auth) ============ */
 
 export const admin = {
@@ -209,6 +273,12 @@ export const admin = {
   blockSeats: (jwt, seatIds, blocked) =>
     request('/admin/seats/block', { method: 'POST', body: { seat_ids: seatIds, blocked }, adminToken: jwt }),
 
-  /** GET /admin/stats → vendidos, en revisión, recaudado */
+  /**
+   * GET /admin/seats → [{ id, row, number, vip, status, order_code? }], con status
+   * 'available' | 'held' | 'pending_review' | 'sold' | 'blocked'. Mapa detallado solo para la directiva.
+   */
+  listSeats: (jwt, opts) => request('/admin/seats', { ...opts, adminToken: jwt }),
+
+  /** GET /admin/stats → { sold, pending_review, revenue, checked_in } */
   getStats: (jwt, opts) => request('/admin/stats', { ...opts, adminToken: jwt }),
 };

@@ -10,11 +10,12 @@ import { useEffect, useRef } from 'react';
  *   onClose: () => void,           // Escape, clic en el fondo (si dismissible)
  *   labelledBy: string,            // id del título del diálogo
  *   dismissible?: boolean,         // false = el clic en el fondo no lo cierra
+ *   size?: 'md' | 'lg',            // lg: hasta 760 px (ej. visor de comprobantes)
  *   className?: string,
  *   children: React.ReactNode,
  * }} props
  */
-export default function Modal({ open, onClose, labelledBy, dismissible = true, className = '', children }) {
+export default function Modal({ open, onClose, labelledBy, dismissible = true, size = 'md', className = '', children }) {
   const ref = useRef(null);
 
   useEffect(() => {
@@ -47,7 +48,7 @@ export default function Modal({ open, onClose, labelledBy, dismissible = true, c
     >
       <div
         className={
-          'mx-auto max-h-[94vh] max-w-[460px] animate-sheet-up overflow-auto rounded-t-[26px] bg-bg ' +
+          `mx-auto max-h-[94vh] ${size === 'lg' ? 'max-w-[760px]' : 'max-w-[460px]'} animate-sheet-up overflow-auto rounded-t-[26px] bg-bg ` +
           'px-[18px] pt-[22px] pb-[calc(20px+env(safe-area-inset-bottom))] sm:animate-sheet-in sm:rounded-[26px] ' +
           className
         }

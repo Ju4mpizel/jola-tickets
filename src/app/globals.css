@@ -166,6 +166,18 @@
   :focus-visible { outline: 2.5px solid var(--color-cyan-strong); outline-offset: 2px; border-radius: 10px; }
 }
 
+/* ============ Impresión (boleto): fondo blanco y colores claros aunque esté en modo oscuro ============ */
+@media print {
+  :root, .dark {
+    --bg: #FFFFFF; --surface: #FFFFFF; --surface-2: #F1F5FA; --surface-3: #E6EDF6;
+    --ink: #0B1B48; --muted: #56638A; --line: #CCD5E3; --accent-ink: #0B7A8F;
+    color-scheme: light;
+  }
+  body { background: #FFFFFF !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; box-shadow: none !important; }
+  @page { margin: 12mm; }
+}
+
 /* ============ Movimiento reducido: se apaga todo ============ */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

@@ -56,16 +56,17 @@ function handle(status, data) {
  *   orderToken?: string,                   // cabecera X-Order-Token (comprador)
  *   adminToken?: string,                   // Authorization: Bearer <JWT> (directiva)
  *   signal?: AbortSignal,
+ *   onProgress?: (fraction: number) => void,   // solo en modo simulado (la subida real usa XHR)
  * }} [options]
  */
-async function request(path, { method = 'GET', body, orderToken, adminToken, signal } = {}) {
+async function request(path, { method = 'GET', body, orderToken, adminToken, signal, onProgress } = {}) {
   const headers = {};
   if (orderToken) headers['X-Order-Token'] = orderToken;
   if (adminToken) headers.Authorization = `Bearer ${adminToken}`;
 
   if (USE_MOCKS) {
     const { mockFetch } = await import('./mocks');
-    const res = await mockFetch(method, path, { body, headers, signal });
+    const res = await mockFetch(method, path, { body, headers, signal, onProgress });
     return handle(res.status, res.data);
   }
 
@@ -124,14 +125,42 @@ export const releaseHold = (orderId, accessToken) =>
 
 /**
  * POST /orders/{order_id}/receipt (multipart, campo `file`) → { order_code, status: 'pending_review' }
+ * Con onProgress, la subida real va por XMLHttpRequest (fetch no informa el avance de la subida).
  * @param {string} orderId
  * @param {string} accessToken
  * @param {File | Blob} file   ya comprimido en el navegador
+ * @param {{ onProgress?: (fraction: number) => void, signal?: AbortSignal }} [options]
  */
-export function submitReceipt(orderId, accessToken, file) {
+export function submitReceipt(orderId, accessToken, file, { onProgress, signal } = {}) {
   const form = new FormData();
   form.append('file', file, file.name || 'comprobante');
-  return request(`/orders/${enc(orderId)}/receipt`, { method: 'POST', body: form, orderToken: accessToken });
+  const path = `/orders/${enc(orderId)}/receipt`;
+  if (USE_MOCKS || !onProgress || typeof XMLHttpRequest === 'undefined') {
+    return request(path, { method: 'POST', body: form, orderToken: accessToken, signal, onProgress });
+  }
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${BASE}${path}`);
+    xhr.setRequestHeader('X-Order-Token', accessToken);
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    xhr.onload = () => {
+      let data = null;
+      try {
+        data = xhr.status === 204 ? null : JSON.parse(xhr.responseText);
+      } catch {
+        data = null;
+      }
+      try {
+        resolve(handle(xhr.status, data));
+      } catch (err) {
+        reject(err);
+      }
+    };
+    xhr.onerror = () => reject(new ApiError(0, 'NETWORK_ERROR'));
+    xhr.onabort = () => reject(new DOMException('Cancelado', 'AbortError'));
+    signal?.addEventListener('abort', () => xhr.abort());
+    xhr.send(form);
+  });
 }
 
 /** GET /orders/{order_id} → { order_code, status, total, seats, reject_reason, tickets? } */
@@ -143,6 +172,18 @@ export const getTicket = (token, opts) => request(`/tickets/${enc(token)}`, opts
 
 /** URL de la imagen PNG del QR del boleto (la genera el servidor). */
 export const ticketQrUrl = (token) => `${BASE}/tickets/${enc(token)}/qr.png`;
+
+/**
+ * Solo en desarrollo con datos simulados: aprueba o rechaza una orden en revisión para
+ * probar las vistas de /orden (?mock=approved o ?mock=rejected). En producción no hace nada.
+ * @param {string} orderId
+ * @param {'approved' | 'rejected'} outcome
+ */
+export async function devSimulateReview(orderId, outcome) {
+  if (!USE_MOCKS || process.env.NODE_ENV === 'production') return;
+  const { mockTools } = await import('./mocks');
+  mockTools.review(orderId, outcome);
+}
 
 /* ============ Directiva (requiere el JWT de Supabase Auth) ============ */
 

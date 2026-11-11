@@ -4,6 +4,8 @@
  * Cada función devuelve el mensaje de error, o '' si el valor es válido.
  */
 
+import { RECEIPT_EXTENSIONS, RECEIPT_MAX_BYTES, RECEIPT_TYPES } from './event';
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const PHONE_RE = /^[67]\d{7}$/;
 
@@ -49,4 +51,18 @@ export function validateBuyer(buyer = {}) {
     email: validateEmail(buyer.email),
   };
   return Object.fromEntries(Object.entries(errors).filter(([, msg]) => msg));
+}
+
+/**
+ * Comprobante antes de subir: JPG, PNG, WEBP o PDF, de máximo 4 MB (mismas reglas que el servidor).
+ * Revisa el tipo y, si el navegador no lo informa (pasa en algunos Android), la extensión.
+ * @param {File} file
+ * @returns {{ code: 'FILE_TYPE' | 'FILE_TOO_LARGE', message: string } | null}
+ */
+export function validateReceipt(file) {
+  const ext = (file?.name || '').split('.').pop().toLowerCase();
+  const typeOk = file?.type ? RECEIPT_TYPES.includes(file.type) : RECEIPT_EXTENSIONS.includes(ext);
+  if (!file || !typeOk) return { code: 'FILE_TYPE', message: 'Sube una imagen JPG, PNG o WEBP, o un PDF' };
+  if (file.size > RECEIPT_MAX_BYTES) return { code: 'FILE_TOO_LARGE', message: 'El archivo pesa más de 4 MB. Sube una captura más liviana' };
+  return null;
 }

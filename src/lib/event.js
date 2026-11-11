@@ -40,6 +40,27 @@ export const SEATS_REFRESH_MS = 15_000;
 
 export const CURRENCY = 'Bs';
 
+/**
+ * Datos de pago del colegio: QR estático del banco y, como alternativa al QR, los datos de la
+ * cuenta. Los valores son de EJEMPLO hasta recibir los reales.
+ * Si public/images/qr-pago.png no existe, PaymentStep muestra un placeholder "QR de ejemplo".
+ */
+export const PAYMENT = {
+  qrSrc: '/images/qr-pago.png',
+  bank: 'Banco EJEMPLO',
+  holder: 'Joy of Learning Academy (EJEMPLO)',
+  account: '0000-000000-EJEMPLO',
+};
+
+/** Comprobante: imagen JPG, PNG o WEBP, o PDF, de máximo 4 MB (igual que el servidor). */
+export const RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+export const RECEIPT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'pdf'];
+export const RECEIPT_MAX_BYTES = 4 * 1024 * 1024;
+/** Las imágenes se comprimen en el navegador por debajo de este tamaño antes de subir. */
+export const RECEIPT_TARGET_BYTES = 2 * 1024 * 1024;
+/** Cada cuánto se actualiza la página de la orden mientras está en revisión. */
+export const ORDER_REFRESH_MS = 30_000;
+
 /** @param {string} row */
 export const isVipRow = (row) => VIP_ROWS.includes(row);
 

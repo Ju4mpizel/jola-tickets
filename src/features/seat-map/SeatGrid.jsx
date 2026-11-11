@@ -1,16 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useAnnounce, useToast } from '@/components/ui/ToastProvider';
-import { usePurchase } from '@/context/PurchaseContext';
-import { anim, hasFinePointer, shake, vibrate } from '@/lib/feedback';
+import { useSelection } from '@/context/PurchaseContext';
+import { anim, shake, vibrate } from '@/lib/feedback';
 import { AISLE_AFTER, MAX_SEATS, ROWS, SEATS_PER_ROW, VIP_ROWS, formatMoney, seatCode } from '@/lib/event';
 import useRovingGrid from './hooks/useRovingGrid';
-import Seat from './Seat';
-
-/** Ancho mínimo (px) de una silla para mostrar su número. */
-const TINY_SEAT_PX = 20;
+import Seat, { seatLabel } from './Seat';
 
 /**
  * Plantilla de la grilla: letra | 10 sillas | pasillo | 10 sillas | letra.
@@ -19,15 +16,24 @@ const TINY_SEAT_PX = 20;
 export const GRID_CLASS =
   'relative mx-auto grid w-[calc(100%*var(--zoom))] items-center ' +
   'grid-cols-[22px_repeat(10,minmax(0,1fr))_calc(8px+6px*var(--zoom))_repeat(10,minmax(0,1fr))_22px] ' +
-  '[row-gap:calc(6px+3px*var(--zoom))] [column-gap:calc(2px+1.5px*var(--zoom))] ' +
-  'transition-[width] duration-[350ms] ease-[cubic-bezier(.4,0,.2,1)]';
+  '[row-gap:calc(6px+3px*var(--zoom))] [column-gap:calc(2px+1.5px*var(--zoom))]';
+
+/**
+ * Píxeles fijos que crecen con cada unidad de --zoom en GRID_CLASS: el pasillo (6px)
+ * y los 22 espacios entre columnas (1,5px cada uno). useMapZoom lo usa para calcular
+ * el tamaño de silla de cada nivel con una sola medición. Cambiarlo junto con GRID_CLASS.
+ */
+export const GRID_PX_PER_ZOOM = 6 + 22 * 1.5;
+
+/** Transición del ancho: solo cuando el usuario pulsa + o −. */
+const ZOOM_TRANSITION = 'transition-[width] duration-[350ms] ease-[cubic-bezier(.4,0,.2,1)]';
 
 /** Columna de la grilla para el asiento n (1–20): deja la columna 12 para el pasillo. */
 export const seatColumn = (number) => (number <= AISLE_AFTER ? number + 1 : number + 2);
 
 const ROW_LABEL =
   'sticky z-[2] grid self-stretch place-items-center rounded-lg bg-surface text-[.75rem] font-extrabold text-muted ' +
-  'animate-[rise_.4s_ease_backwards] [animation-delay:calc(var(--r)*60ms+550ms)] transition-colors duration-300';
+  'animate-[rise_.3s_ease_backwards] [animation-delay:calc(var(--r)*45ms)] transition-colors duration-300';
 
 /**
  * Grilla de 9 filas × 20 sillas con pasillo central, letras de fila fijas a ambos lados
@@ -36,16 +42,17 @@ const ROW_LABEL =
  * @param {{
  *   seats: { id: number, row: string, number: number, price: number, vip: boolean, status: string }[],
  *   zoom?: number,
+ *   tiny?: boolean,          // sillas de menos de 20 px: se ocultan los números
+ *   animateZoom?: boolean,   // el cambio de zoom lo pidió el usuario: con transición
+ *   finePointer?: boolean,   // PC con mouse: muestra el tooltip (lo calcula useMapZoom)
  *   ref?: React.RefObject<HTMLDivElement>,   // lo usa useMapZoom para medir las sillas
  * }} props
  */
-export default function SeatGrid({ seats, zoom = 1, ref }) {
+export default function SeatGrid({ seats, zoom = 1, tiny = false, animateZoom = false, finePointer = false, ref }) {
   const ownRef = useRef(null);
   const gridRef = ref ?? ownRef;
   const tipRef = useRef(null);
-  const [tiny, setTiny] = useState(false);
-  const [finePointer, setFinePointer] = useState(false);
-  const { selected, toggleSeat } = usePurchase();
+  const { selected, toggleSeat } = useSelection();
   // Copia al día de la selección para el total anunciado (varios clics antes de volver a pintar)
   const liveSelected = useRef(selected);
   liveSelected.current = selected;
@@ -57,14 +64,20 @@ export default function SeatGrid({ seats, zoom = 1, ref }) {
     () =>
       seats
         .filter((s) => ROWS.includes(s.row) && s.number >= 1 && s.number <= SEATS_PER_ROW)
-        .map((s) => ({
-          ...s,
-          r: ROWS.indexOf(s.row),
-          c: s.number - 1,
-          code: seatCode(s.row, s.number),
-          taken: s.status !== 'available',
-          dist: Math.round(Math.abs(s.number - 1 - (SEATS_PER_ROW - 1) / 2)),
-        }))
+        .map((s) => {
+          const taken = s.status !== 'available';
+          return {
+            ...s,
+            r: ROWS.indexOf(s.row),
+            c: s.number - 1,
+            code: seatCode(s.row, s.number),
+            taken,
+            status: taken ? 'taken' : 'available',
+            label: seatLabel({ ...s, taken }),
+            column: seatColumn(s.number),
+            dist: Math.round(Math.abs(s.number - 1 - (SEATS_PER_ROW - 1) / 2)),
+          };
+        })
         .sort((a, b) => a.r - b.r || a.number - b.number),
     [seats],
   );
@@ -79,24 +92,9 @@ export default function SeatGrid({ seats, zoom = 1, ref }) {
     },
     [byPos, gridRef],
   );
-  const { focus, setFocus, onKeyDown } = useRovingGrid({ rows: ROWS.length, cols: SEATS_PER_ROW, getElement });
-  const focusId = byPos.get(`${focus.r}:${focus.c}`)?.id ?? cells[0]?.id;
-
-  useEffect(() => setFinePointer(hasFinePointer()), []);
-
-  // Con sillas muy pequeñas se ocultan los números (ej. celular en vista completa)
-  useEffect(() => {
-    const grid = gridRef.current;
-    if (!grid || typeof ResizeObserver === 'undefined') return;
-    const measure = () => {
-      const seat = grid.querySelector('[data-seat-id]');
-      if (seat) setTiny(seat.offsetWidth < TINY_SEAT_PX);
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(grid);
-    return () => ro.disconnect();
-  }, [cells.length, gridRef]);
+  const { setFocus, onKeyDown } = useRovingGrid({ rows: ROWS.length, cols: SEATS_PER_ROW, getElement });
+  // Solo la primera silla nace enfocable; después useRovingGrid mueve el tabIndex por el DOM
+  const firstId = cells[0]?.id;
 
   /** Elegir o quitar una silla (clic, toque, Enter o Espacio). */
   function handleClick(e) {
@@ -165,7 +163,7 @@ export default function SeatGrid({ seats, zoom = 1, ref }) {
       aria-label="Asientos. El escenario está al frente. Usa las flechas para moverte y Enter para elegir."
       data-tiny={tiny}
       style={{ '--zoom': zoom }}
-      className={`group/grid ${GRID_CLASS}`}
+      className={`group/grid ${GRID_CLASS} ${animateZoom ? ZOOM_TRANSITION : ''}`}
       onClick={handleClick}
       onKeyDown={onKeyDown}
       onMouseOver={finePointer ? handleMouseOver : undefined}
@@ -175,7 +173,7 @@ export default function SeatGrid({ seats, zoom = 1, ref }) {
       <div
         aria-hidden="true"
         style={{ gridRow: `${Math.min(...vipRows)} / ${Math.max(...vipRows) + 1}`, gridColumn: '2 / 23' }}
-        className="pointer-events-none -mx-1 -my-[5px] animate-[band-in_.6s_.7s_ease_both] self-stretch rounded-xl border-[1.5px] border-dashed border-band-line bg-band"
+        className="pointer-events-none -mx-1 -my-[5px] animate-[band-in_.4s_ease_both] self-stretch rounded-xl border-[1.5px] border-dashed border-band-line bg-band"
       />
 
       {ROWS.map((row, r) => (
@@ -186,17 +184,16 @@ export default function SeatGrid({ seats, zoom = 1, ref }) {
         <Seat
           key={s.id}
           id={s.id}
-          row={s.row}
           number={s.number}
-          vip={s.vip}
-          price={s.price}
-          taken={s.taken}
+          label={s.label}
+          status={s.status}
           selected={selectedSet.has(s.id)}
+          vip={s.vip}
           gridRow={s.r + 1}
-          gridColumn={seatColumn(s.number)}
+          gridColumn={s.column}
           waveRow={s.r}
           waveDist={s.dist}
-          tabIndex={s.id === focusId ? 0 : -1}
+          focusable={s.id === firstId}
         />
       ))}
 

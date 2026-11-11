@@ -5,7 +5,7 @@ import Rays from '@/components/brand/Rays';
 import AnimatedNumber from '@/components/ui/AnimatedNumber';
 import Button from '@/components/ui/Button';
 import { useToast } from '@/components/ui/ToastProvider';
-import { usePurchase } from '@/context/PurchaseContext';
+import { usePurchaseFlow, useSelection } from '@/context/PurchaseContext';
 import { PRICE_VIP, ROWS, SEATS_PER_ROW, TOTAL_SEATS, formatMoney, seatCode, sortSeatCodes } from '@/lib/event';
 import useMapZoom from './hooks/useMapZoom';
 import useSeats from './hooks/useSeats';
@@ -33,12 +33,16 @@ function lostSeatsMessage(codes) {
 
 /**
  * Tarjeta del mapa: saludo, título, disponibles, leyenda, escenario, grilla, ayuda y widget de zoom.
- * Pide los asientos con useSeats (se actualizan cada 15 s).
- * @param {{ titleId: string }} props   id del título (recibe el foco al entrar al paso)
+ * Pide los asientos con useSeats (se actualizan cada 15 s mientras el mapa está activo).
+ * @param {{
+ *   titleId: string,    // id del título (recibe el foco al entrar al paso)
+ *   active?: boolean,   // false mientras se paga: el mapa queda escondido y sin actualizarse
+ * }} props
  */
-export default function SeatMap({ titleId }) {
-  const { buyer, selected, removeSeats } = usePurchase();
-  const { seats, loading, error, refresh } = useSeats();
+export default function SeatMap({ titleId, active = true }) {
+  const { buyer } = usePurchaseFlow();
+  const { selected, removeSeats } = useSelection();
+  const { seats, loading, error, refresh } = useSeats({ active });
   const toast = useToast();
   const scrollerRef = useRef(null);
   const gridRef = useRef(null);
@@ -47,16 +51,17 @@ export default function SeatMap({ titleId }) {
   const free = seats.filter((s) => s.status === 'available' && !selected.includes(s.id)).length;
   const firstName = buyer?.name.split(' ')[0];
 
-  // Si al actualizar el mapa (o al recuperar la selección) una silla elegida ya no está libre, se quita
+  // Si al actualizar el mapa (o al recuperar la selección) una silla elegida ya no está libre, se quita.
+  // Solo con el mapa activo: con una orden en curso, las sillas propias figuran ocupadas
   useEffect(() => {
-    if (!ready || !selected.length) return;
+    if (!active || !ready || !selected.length) return;
     const byId = new Map(seats.map((s) => [s.id, s]));
     const lost = selected.filter((id) => byId.get(id)?.status !== 'available');
     if (!lost.length) return;
     removeSeats(lost);
     const codes = lost.map((id) => byId.get(id)).filter(Boolean).map((s) => seatCode(s.row, s.number));
     if (codes.length) toast(lostSeatsMessage(sortSeatCodes(codes)));
-  }, [seats, selected, ready, removeSeats, toast]);
+  }, [active, seats, selected, ready, removeSeats, toast]);
 
   const hint = !zoom.measured
     ? ''
@@ -111,10 +116,10 @@ export default function SeatMap({ titleId }) {
 
       <div
         ref={scrollerRef}
-        className="overflow-x-auto overflow-y-hidden px-1 pt-2.5 pb-2 [scrollbar-color:var(--line)_transparent] [scrollbar-width:thin] [-webkit-overflow-scrolling:touch]"
+        className="overflow-x-auto overflow-y-hidden px-1 pt-2.5 pb-2 [contain:layout_paint] [scrollbar-color:var(--line)_transparent] [scrollbar-width:thin] [-webkit-overflow-scrolling:touch]"
       >
         {ready ? (
-          <SeatGrid ref={gridRef} seats={seats} zoom={zoom.zoom} />
+          <SeatGrid ref={gridRef} seats={seats} zoom={zoom.zoom} tiny={zoom.tiny} animateZoom={zoom.animate} finePointer={zoom.finePointer} />
         ) : error && !loading ? (
           <LoadError message={error.message} onRetry={refresh} />
         ) : (
@@ -161,7 +166,7 @@ function Stage() {
   );
 }
 
-/** Grilla gris del mismo tamaño que el mapa mientras llegan los datos. */
+/** Grilla gris del mismo tamaño que el mapa mientras llegan los datos (sin animación). */
 function SkeletonGrid() {
   return (
     <div style={{ '--zoom': 1 }} className={GRID_CLASS}>
@@ -174,7 +179,7 @@ function SkeletonGrid() {
             key={`${row}${c}`}
             aria-hidden="true"
             style={{ gridRow: r + 1, gridColumn: seatColumn(c + 1) }}
-            className="aspect-square w-full animate-pulse rounded-[26%] bg-surface-3"
+            className="aspect-square w-full rounded-[26%] bg-surface-3"
           />
         )),
       )}

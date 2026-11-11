@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import Reveal from '@/components/ui/Reveal';
 import { IconStar } from '@/components/ui/icons';
 import { EVENT } from '@/lib/event';
@@ -5,8 +6,9 @@ import { EVENT } from '@/lib/event';
 /**
  * Tarjeta del evento con forma de boleto (debajo del mapa). Aparece al hacer scroll:
  * la línea punteada se dibuja desde el centro y la estrella salta.
+ * Con memo: es estática y no debe volver a pintarse al cambiar de paso.
  */
-export default function EventCard() {
+function EventCard() {
   return (
     <Reveal
       as="section"
@@ -57,3 +59,5 @@ export default function EventCard() {
     </Reveal>
   );
 }
+
+export default memo(EventCard);

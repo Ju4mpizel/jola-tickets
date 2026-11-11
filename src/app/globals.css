@@ -82,7 +82,9 @@
   --animate-rise: rise .5s ease both;
   --animate-fade-in: fade-in .4s ease;
   --animate-card-in: card-in .6s .1s cubic-bezier(.2, .8, .2, 1) both;
-  --animate-seat-in: seat-in .55s cubic-bezier(.3, 1.45, .5, 1) backwards;
+  /* Entrada de las sillas: PC con leve rebote de escala; táctil por fila, sin escala */
+  --animate-seat-in: seat-in .4s cubic-bezier(.3, 1.35, .5, 1) backwards;
+  --animate-seat-row: seat-row .3s cubic-bezier(.2, .8, .2, 1) backwards;
   --animate-wiggle: wiggle 6s ease-in-out 1.2s infinite;
   --animate-fill: fill .6s .3s ease both;
   --animate-pop: pop .45s cubic-bezier(.3, 1.6, .5, 1);
@@ -101,7 +103,8 @@
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes card-in { from { opacity: 0; transform: translateY(18px) scale(.985); } }
-@keyframes seat-in { from { opacity: 0; transform: translateY(-14px) scale(.4); } }
+@keyframes seat-in { from { opacity: 0; transform: translateY(-10px) scale(.6); } }
+@keyframes seat-row { from { opacity: 0; transform: translateY(-8px); } }
 @keyframes wiggle {
   0%, 90%, 100% { transform: rotate(0); }
   93% { transform: rotate(-6deg); }

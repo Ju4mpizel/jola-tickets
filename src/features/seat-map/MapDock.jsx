@@ -43,7 +43,9 @@ export default function MapDock({ seats, selected, zoom }) {
       <div
         className={
           'pointer-events-auto flex -translate-y-full items-stretch gap-1.5 rounded-[18px] border border-line p-1.5 ' +
-          'bg-[color-mix(in_srgb,var(--surface)_82%,transparent)] backdrop-blur-[14px] backdrop-saturate-[1.3] ' +
+          // Fondo translúcido con desenfoque solo en PC; en táctil, sólido (backdrop-filter es caro de pintar)
+          'bg-surface pointer-fine:bg-[color-mix(in_srgb,var(--surface)_82%,transparent)] ' +
+          'pointer-fine:backdrop-blur-[14px] pointer-fine:backdrop-saturate-[1.3] ' +
           'shadow-[0_12px_30px_-10px_rgba(6,13,34,.35)] transition-colors duration-300 ' +
           'max-lg:gap-1 max-lg:rounded-[15px] max-lg:p-1'
         }

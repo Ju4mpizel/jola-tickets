@@ -5,7 +5,10 @@
  *
  * El estado se guarda en localStorage ('jola-mock-db') para que sobreviva a recargas
  * y se comparta entre pestañas (ej. comprar en una y aprobar desde /admin en otra).
- * Desde la consola: window.__jolaMocks.reset(), .takeSeats(['C5','C6']), .expireHold(orderId), .failNext(2)…
+ * El estado vive en memoria y se copia en localStorage, para que una recarga en el paso de pago
+ * encuentre la misma retención (como pasaría con el servidor real).
+ * Desde la consola: window.__jolaMocks.reset(), .takeSeats(['C5','C6']), .expireHold(orderId),
+ * .failNext(2), .shortHold(true)…
  *
  * Es el ÚNICO lugar con datos inventados: sillas ocupadas, códigos y tokens falsos.
  */
@@ -22,6 +25,22 @@ const FILE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
  */
 const SOLD_RATIO = 0.23;
 const SEED = 20261121;
+/**
+ * Retención corta para probar el vencimiento: true = 1 minuto en lugar de HOLD_MINUTES.
+ * También se puede activar desde la consola con window.__jolaMocks.shortHold(true).
+ */
+const SHORT_HOLD_FOR_TESTS = false;
+let holdMinutes = SHORT_HOLD_FOR_TESTS ? 1 : HOLD_MINUTES;
+/**
+ * Silla que siempre responde SEAT_TAKEN al retener, para probar ese error: queda retenida
+ * por "otro comprador" durante 30 s (así el mapa la muestra ocupada y luego se libera).
+ */
+const ALWAYS_TAKEN = { row: 'I', number: 20 };
+const ALWAYS_TAKEN_HOLD_MS = 30_000;
+/** Lo que tarda la subida simulada del comprobante (ms). */
+const UPLOAD_MS = 1500;
+/** Motivo de rechazo de ejemplo (window.__jolaMocks.review y ?mock=rejected). */
+const SAMPLE_REJECT_REASON = 'No encontramos una transferencia con este código de orden. Revisa la glosa y vuelve a intentarlo.';
 /** Latencia de red simulada (ms): unos 400 ms. */
 const LATENCY_MIN = 350;
 const LATENCY_SPREAD = 100;
@@ -146,6 +165,11 @@ function createHold(db, body) {
   }
   const seats = ids.map((id) => db.seats.find((s) => s.id === id));
   if (seats.some((s) => !s)) return fail(400, 'INVALID_DATA', 'Uno de los asientos no existe');
+  const trap = seats.find((s) => s.row === ALWAYS_TAKEN.row && s.number === ALWAYS_TAKEN.number);
+  if (trap && isFree(trap)) {
+    Object.assign(trap, { status: 'held', held_until: now() + ALWAYS_TAKEN_HOLD_MS, order_id: 'otro-comprador' });
+    save(db);
+  }
   if (seats.some((s) => !isFree(s))) return fail(409, 'SEAT_TAKEN', 'Alguien acaba de tomar uno de tus asientos');
 
   let code;
@@ -153,7 +177,8 @@ function createHold(db, body) {
   while (Object.values(db.orders).some((o) => o.order_code === code));
 
   const id = uuid();
-  const expires = now() + HOLD_MINUTES * 60_000;
+  const expires = now() + holdMinutes * 60_000;
+  // El total lo calcula el "servidor" con sus propios precios, nunca con lo que envía el navegador
   const total = seats.reduce((sum, s) => sum + s.price, 0);
   db.orders[id] = {
     id,
@@ -359,6 +384,15 @@ const ROUTES = [
   ['GET', /^\/admin\/stats$/, (db) => getStats(db), true],
 ];
 
+/** Subida simulada: avisa el avance en pasos y tarda UPLOAD_MS. */
+async function simulateUpload(onProgress, signal) {
+  const steps = 10;
+  for (let i = 1; i <= steps; i++) {
+    await wait(UPLOAD_MS / steps, signal);
+    onProgress?.(i / steps);
+  }
+}
+
 function wait(ms, signal) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(resolve, ms);
@@ -373,12 +407,21 @@ function wait(ms, signal) {
  * Responde como lo haría el servidor: { status, data }.
  * @param {string} method
  * @param {string} path      ruta del contrato con query, ej. '/admin/orders?status=pending_review'
- * @param {{ body?: object | FormData, headers?: Record<string, string>, signal?: AbortSignal }} req
+ * @param {{
+ *   body?: object | FormData,
+ *   headers?: Record<string, string>,
+ *   signal?: AbortSignal,
+ *   onProgress?: (fraction: number) => void,   // subida del comprobante
+ * }} req
  */
-export async function mockFetch(method, path, { body, headers = {}, signal } = {}) {
-  await wait(LATENCY_MIN + Math.random() * LATENCY_SPREAD, signal);
+export async function mockFetch(method, path, { body, headers = {}, signal, onProgress } = {}) {
+  const isUpload = method === 'POST' && /^\/orders\/[^/]+\/receipt$/.test(path);
+  if (isUpload) await simulateUpload(onProgress, signal);
+  else await wait(LATENCY_MIN + Math.random() * LATENCY_SPREAD, signal);
   if (failuresLeft > 0) {
     failuresLeft--;
+    // Sin conexión (status 0) o error del servidor (500)
+    if (failureKind === 'network') return fail(0, 'NETWORK_ERROR', 'No pudimos conectar. Revisa tu conexión e inténtalo de nuevo.');
     return fail(500, 'SERVER_ERROR', 'Algo salió mal. Inténtalo de nuevo en unos segundos.');
   }
   const [pathname, search = ''] = path.split('?');
@@ -401,13 +444,32 @@ export async function mockFetch(method, path, { body, headers = {}, signal } = {
 
 /* ============ Herramientas para probar desde la consola ============ */
 
-/** Cuántas de las próximas peticiones fallan con 500 (ver mockTools.failNext). */
+/** Cuántas de las próximas peticiones fallan, y cómo (ver mockTools.failNext). */
 let failuresLeft = 0;
+let failureKind = 'server';
 
 export const mockTools = {
-  /** Hace fallar las próximas `count` peticiones con 500 SERVER_ERROR. Sirve para probar estados de error. */
-  failNext(count = 1) {
+  /**
+   * Hace fallar las próximas `count` peticiones. kind: 'server' (500 SERVER_ERROR) o
+   * 'network' (sin conexión). Sirve para probar estados de error.
+   */
+  failNext(count = 1, kind = 'server') {
     failuresLeft = count;
+    failureKind = kind;
+  },
+  /**
+   * Aprueba o rechaza una orden en revisión, como lo haría la directiva desde /admin.
+   * @param {string} orderId
+   * @param {'approved' | 'rejected'} outcome
+   */
+  review(orderId, outcome, reason = SAMPLE_REJECT_REASON) {
+    const db = load();
+    const res = outcome === 'approved' ? approveOrder(db, orderId) : rejectOrder(db, orderId, { reason });
+    return res.data;
+  },
+  /** Retención de 1 minuto (true) o de HOLD_MINUTES (false) para las próximas órdenes. */
+  shortHold(on = true) {
+    holdMinutes = on ? 1 : HOLD_MINUTES;
   },
   /** Vuelve al estado inicial. */
   reset() {

@@ -46,10 +46,10 @@
     </table>
   </td></tr>
 
-  <!-- Una tarjeta por entrada -->
-  {{#tickets}}
-  <tr><td style="padding:8px 28px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E0E7F1;border-radius:16px;">
+  <!-- Una tarjeta por entrada: el bucle va DENTRO de una celda para que el editor de EmailJS no lo mueva -->
+  <tr><td style="padding:0 28px;">
+    {{#tickets}}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E0E7F1;border-radius:16px;margin:8px 0;">
       <tr>
         <td width="136" align="center" style="padding:12px;">
           <img src="{{qr_url}}" width="120" height="120" alt="Código QR de la entrada {{label}}" style="display:block;border:0;width:120px;height:120px;">
@@ -61,8 +61,8 @@
         </td>
       </tr>
     </table>
+    {{/tickets}}
   </td></tr>
-  {{/tickets}}
 
   <!-- Indicaciones -->
   <tr><td style="padding:16px 28px 8px;font-size:14px;line-height:1.7;color:#56638A;">

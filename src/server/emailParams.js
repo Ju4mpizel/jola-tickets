@@ -1,19 +1,21 @@
 /**
- * Parámetros de las plantillas de EmailJS (boleto_aprobado y orden_rechazada).
+ * Parámetros de las plantillas de EmailJS (email-templates/boleto_aprobado.html y
+ * email-templates/orden_rechazada.html). Deben coincidir EXACTAMENTE con las variables
+ * {{...}} de cada plantilla; to_email no aparece en el HTML porque va en el campo
+ * "To Email" de la plantilla en EmailJS.
+ *
  * Módulo puro, sin 'server-only' ni el alias @/: lo usan src/server/email.js y también
  * scripts/test-email.mjs (que corre con node directo), así la prueba envía exactamente
  * los mismos parámetros que el servidor.
  */
 import { EVENT, ROWS, formatMoney, seatCode, sortSeatCodes } from '../lib/event.js';
 
-const escapeHtml = (text) =>
-  String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-
 const orderUrl = (appUrl, order) =>
   `${appUrl}/orden/${encodeURIComponent(order.order_id)}?k=${encodeURIComponent(order.access_token)}`;
 
 /**
- * boleto_aprobado
+ * boleto_aprobado: to_email, to_name, order_code, seats, total, event_date, doors_time,
+ * event_place, order_url, site_url y tickets ({{#tickets}} con label, url y qr_url).
  * @param {{ order_id: string, order_code: string, access_token: string, buyer_name: string,
  *           buyer_email: string, total?: number, total_amount?: number }} order
  * @param {{ token: string, row: string, number: number }[]} tickets
@@ -22,40 +24,27 @@ const orderUrl = (appUrl, order) =>
  */
 export function approvedParams(order, tickets, appUrl, { qrUrl } = {}) {
   const sorted = [...tickets].sort((a, b) => ROWS.indexOf(a.row) - ROWS.indexOf(b.row) || a.number - b.number);
-  const list = sorted.map((t) => ({
-    label: `Fila ${t.row} · Asiento ${t.number}`,
-    url: `${appUrl}/tickets/${encodeURIComponent(t.token)}`,
-    qr_url: qrUrl ? qrUrl(t.token) : `${appUrl}/api/v1/tickets/${encodeURIComponent(t.token)}/qr.png`,
-  }));
-  // Mismo bloque del plan, para plantillas que usan {{{tickets_html}}}: QR + enlace por entrada
-  const ticketsHtml = list
-    .map(
-      (t) =>
-        `<div style="margin:16px 0;text-align:center">` +
-        `<img src="${escapeHtml(t.qr_url)}" width="180" height="180" alt="QR de ${escapeHtml(t.label)}">` +
-        `<p>${escapeHtml(t.label)} · <a href="${escapeHtml(t.url)}">Ver mi boleto</a></p></div>`,
-    )
-    .join('');
-
   return {
     to_email: order.buyer_email,
     to_name: order.buyer_name,
     order_code: order.order_code,
     seats: sortSeatCodes(tickets.map((t) => seatCode(t.row, t.number))).join(', '),
     total: formatMoney(order.total ?? order.total_amount),
-    event_name: EVENT.name,
     event_date: EVENT.dateLong,
-    doors_open: EVENT.doorsOpen,
+    doors_time: EVENT.doorsOpen,
     event_place: EVENT.place,
     order_url: orderUrl(appUrl, order),
     site_url: appUrl,
-    tickets: list,
-    tickets_html: ticketsHtml,
+    tickets: sorted.map((t) => ({
+      label: `Fila ${t.row} · Asiento ${t.number}`,
+      url: `${appUrl}/tickets/${encodeURIComponent(t.token)}`,
+      qr_url: qrUrl ? qrUrl(t.token) : `${appUrl}/api/v1/tickets/${encodeURIComponent(t.token)}/qr.png`,
+    })),
   };
 }
 
 /**
- * orden_rechazada
+ * orden_rechazada: to_email, to_name, order_code, reason, retry_url y site_url.
  * @param {{ order_code: string, buyer_name: string, buyer_email: string }} order
  * @param {string} reason
  * @param {string} appUrl   sin "/" final
@@ -66,7 +55,6 @@ export function rejectedParams(order, reason, appUrl) {
     to_name: order.buyer_name,
     order_code: order.order_code,
     reason,
-    event_name: EVENT.name,
     retry_url: appUrl,
     site_url: appUrl,
   };

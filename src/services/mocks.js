@@ -365,7 +365,9 @@ function getOrder(db, orderId, headers) {
     seats: orderSeats(db, order).map(seatRef),
     reject_reason: order.reject_reason,
   };
-  if (order.status === 'approved') data.tickets = orderTickets(db, orderId);
+  if (order.status === 'approved') {
+    data.tickets = orderTickets(db, orderId).map((t) => ({ ...t, is_used: db.tickets[t.token].is_used }));
+  }
   return ok(data);
 }
 

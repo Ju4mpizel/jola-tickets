@@ -163,7 +163,10 @@ export function submitReceipt(orderId, accessToken, file, { onProgress, signal }
   });
 }
 
-/** GET /orders/{order_id} → { order_code, status, total, seats, reject_reason, tickets? } */
+/**
+ * GET /orders/{order_id} → { order_code, status, total, seats: [{ row, number }], reject_reason,
+ *   tickets?: [{ token, row, number, is_used }] }
+ */
 export const getOrder = (orderId, accessToken, opts) =>
   request(`/orders/${enc(orderId)}`, { ...opts, orderToken: accessToken });
 

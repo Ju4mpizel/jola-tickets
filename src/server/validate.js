@@ -56,6 +56,65 @@ export const isUuid = (value) => typeof value === 'string' && UUID_RE.test(value
 /** Los tokens de boleto son 64 caracteres hexadecimales (approve_order). */
 export const isTicketToken = (value) => typeof value === 'string' && TICKET_TOKEN_RE.test(value);
 
+/**
+ * Token de boleto desde lo que manda la puerta: el token solo o la URL completa del QR
+ * (https://<dominio>/tickets/<token>). null si no tiene forma de token.
+ * @param {unknown} text
+ */
+export function ticketTokenFrom(text) {
+  const value = typeof text === 'string' ? text.trim() : '';
+  const match = /\/tickets\/([^/?#]+)\/?(?:[?#].*)?$/.exec(value);
+  let token = value;
+  if (match) {
+    try {
+      token = decodeURIComponent(match[1]);
+    } catch {
+      return null;
+    }
+  }
+  return isTicketToken(token) ? token : null;
+}
+
+/**
+ * Cuerpo de POST /admin/seats/block: { seat_ids: enteros únicos de 1 a 180, blocked: boolean }.
+ * @returns {{ seat_ids: number[], blocked: boolean }}
+ */
+export function parseBlock(body) {
+  const ids = body?.seat_ids;
+  if (
+    !Array.isArray(ids) ||
+    !ids.length ||
+    ids.length > TOTAL_SEATS ||
+    ids.some((id) => !Number.isInteger(id) || id < 1 || id > TOTAL_SEATS) ||
+    new Set(ids).size !== ids.length
+  ) {
+    throw apiError('INVALID_DATA', 400, 'Elige sillas válidas');
+  }
+  if (typeof body.blocked !== 'boolean') throw apiError('INVALID_DATA');
+  return { seat_ids: ids, blocked: body.blocked };
+}
+
+export const REASON_MIN = 3;
+export const REASON_MAX = 300;
+
+/** Motivo del rechazo, de 3 a 300 caracteres. */
+export function parseReason(body) {
+  const reason = typeof body?.reason === 'string' ? body.reason.trim() : '';
+  if (reason.length < REASON_MIN || reason.length > REASON_MAX) {
+    throw apiError('INVALID_DATA', 400, `El motivo debe tener entre ${REASON_MIN} y ${REASON_MAX} caracteres`);
+  }
+  return reason;
+}
+
+/** Cuerpo JSON de la petición; si no es JSON válido, 400 INVALID_DATA. */
+export async function readJson(request) {
+  try {
+    return await request.json();
+  } catch {
+    throw apiError('INVALID_DATA');
+  }
+}
+
 /** Cabecera X-Order-Token de la petición ('' si no viene). */
 export const orderToken = (request) => request.headers.get('x-order-token')?.trim() ?? '';
 

@@ -70,6 +70,7 @@ export default function ReviewStep({ titleId }) {
           La directiva lo revisará y te enviaremos tus entradas a{' '}
           <b className="break-all text-ink">{buyer?.email}</b>.
         </p>
+        <p className="mt-1.5 text-[.85rem] font-semibold text-muted">Revisa también tu carpeta de Spam o Promociones.</p>
 
         <div className="mt-5 rounded-2xl border-[1.5px] border-dashed border-cyan-strong bg-band px-4 py-3">
           <small className="block text-[.72rem] font-bold tracking-[.06em] text-muted uppercase">Código de orden</small>

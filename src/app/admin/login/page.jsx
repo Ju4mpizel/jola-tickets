@@ -30,7 +30,9 @@ export default function AdminLoginPage() {
   // ¿Llegó por una sesión vencida? (se lee en el cliente: la página es estática)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('motivo') === 'sesion') setNotice('Tu sesión venció. Vuelve a entrar.');
+    const motivo = params.get('motivo');
+    if (motivo === 'sesion') setNotice('Tu sesión venció. Vuelve a entrar.');
+    else if (motivo === 'acceso') setNotice('Tu cuenta no tiene acceso al panel.');
   }, []);
 
   // Con sesión, directo al panel

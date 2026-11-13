@@ -213,6 +213,9 @@ function Content({ state, onRetry }) {
             </li>
           ))}
         </ul>
+        <p className="mt-4 text-[.85rem] font-semibold text-muted">
+          También te enviamos las entradas por correo. Si no lo ves, revisa también tu carpeta de Spam o Promociones.
+        </p>
       </section>
     );
   }

@@ -71,10 +71,11 @@ export default function useAdmin({ require = false } = {}) {
       try {
         return await fn(s.token, ...args);
       } catch (err) {
-        if (err?.error === 'UNAUTHORIZED') {
+        // 401: la sesión venció o no vale · 403: la cuenta ya no está en la tabla admins
+        if (err?.error === 'UNAUTHORIZED' || err?.error === 'FORBIDDEN') {
           await adminAuth.signOut(s.token).catch(() => {});
           setSession(null);
-          toLogin('sesion');
+          toLogin(err.error === 'FORBIDDEN' ? 'acceso' : 'sesion');
         }
         throw err;
       }

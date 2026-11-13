@@ -14,6 +14,7 @@ const DEFAULT_MESSAGES = {
   INVALID_DATA: 'Revisa los datos marcados',
   INVALID_SEAT_COUNT: 'Elige entre 1 y 8 asientos',
   UNAUTHORIZED: 'Inicia sesión para continuar',
+  FORBIDDEN: 'Tu cuenta no tiene acceso al panel',
   ORDER_NOT_FOUND: 'No encontramos tu orden',
   TICKET_NOT_FOUND: 'No encontramos este boleto',
   SEAT_TAKEN: 'Alguien acaba de tomar uno de tus asientos',
@@ -45,7 +46,7 @@ export class ApiError extends Error {
 function handle(status, data) {
   if (status >= 200 && status < 300) return status === 204 ? null : data;
   if (data && typeof data === 'object' && data.error) throw new ApiError(status, data.error, data.message);
-  throw new ApiError(status, status === 401 || status === 403 ? 'UNAUTHORIZED' : 'SERVER_ERROR');
+  throw new ApiError(status, status === 401 ? 'UNAUTHORIZED' : status === 403 ? 'FORBIDDEN' : 'SERVER_ERROR');
 }
 
 /**
@@ -212,12 +213,25 @@ export const adminAuth = {
       return data;
     }
     const { getSupabase } = await import('./supabaseBrowser');
-    const { data, error } = await getSupabase().auth.signInWithPassword({ email, password });
+    const supabase = getSupabase();
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error || !data.session) {
       const network = error?.status === 0 || /fetch/i.test(error?.message || '');
       throw new ApiError(network ? 0 : 401, network ? 'NETWORK_ERROR' : 'UNAUTHORIZED', network ? undefined : 'Correo o contraseña incorrectos');
     }
-    return { email: data.user.email, token: data.session.access_token, expiresAt: data.session.expires_at * 1000 };
+    const session = { email: data.user.email, token: data.session.access_token, expiresAt: data.session.expires_at * 1000 };
+    // La contraseña puede ser correcta y la cuenta no estar en la tabla admins: se comprueba ya
+    // con una ruta de la directiva, para avisarlo en el login y no dejar la sesión abierta.
+    try {
+      await admin.getStats(session.token);
+    } catch (err) {
+      if (err?.error === 'FORBIDDEN') {
+        await supabase.auth.signOut().catch(() => {});
+        throw new ApiError(403, 'FORBIDDEN', 'Tu cuenta no tiene acceso al panel');
+      }
+      throw err;
+    }
+    return session;
   },
 
   /** Sesión vigente (con el token ya renovado en modo real) o null. */
@@ -282,6 +296,6 @@ export const admin = {
    */
   listSeats: (jwt, opts) => request('/admin/seats', { ...opts, adminToken: jwt }),
 
-  /** GET /admin/stats → { sold, pending_review, revenue, checked_in } */
+  /** GET /admin/stats → { sold, pending_review, revenue, checked_in, blocked } */
   getStats: (jwt, opts) => request('/admin/stats', { ...opts, adminToken: jwt }),
 };

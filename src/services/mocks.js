@@ -390,7 +390,8 @@ function getTicket(db, token) {
 function listOrders(db, status) {
   const list = Object.values(db.orders)
     .filter((o) => !status || o.status === status)
-    .sort((a, b) => b.created_at - a.created_at)
+    // Como la API real: las pendientes de la más antigua a la más nueva; las revisadas, al revés
+    .sort((a, b) => (status === 'pending_review' ? a.submitted_at - b.submitted_at : (b.reviewed_at ?? 0) - (a.reviewed_at ?? 0)))
     .map((o) => ({
       id: o.id,
       order_code: o.order_code,
@@ -432,7 +433,7 @@ function approveOrder(db, orderId) {
 function rejectOrder(db, orderId, body) {
   const order = db.orders[orderId];
   const reason = (body?.reason || '').trim();
-  if (!reason) return fail(400, 'INVALID_DATA', 'Escribe el motivo del rechazo');
+  if (reason.length < 3 || reason.length > 300) return fail(400, 'INVALID_DATA', 'El motivo debe tener entre 3 y 300 caracteres');
   if (!order || order.status !== 'pending_review') return fail(409, 'ORDER_NOT_PENDING', 'Esta orden ya fue procesada');
   Object.assign(order, { status: 'rejected', reject_reason: reason, reviewed_by: MOCK_ADMIN.email, reviewed_at: now(), email_sent: true });
   db.seats.forEach((s) => {
@@ -490,6 +491,7 @@ function getStats(db) {
     revenue: orders.filter((o) => o.status === 'approved').reduce((sum, o) => sum + o.total_amount, 0),
     // a acordar con el backend: boletos que ya ingresaron (contador de la puerta)
     checked_in: Object.values(db.tickets).filter((t) => t.is_used).length,
+    blocked: db.seats.filter((s) => s.status === 'blocked').length,
   });
 }
 

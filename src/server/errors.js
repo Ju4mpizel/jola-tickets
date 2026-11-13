@@ -10,6 +10,7 @@ const ERRORS = {
   INVALID_DATA: [400, 'Revisa los datos marcados'],
   INVALID_SEAT_COUNT: [400, 'Elige entre 1 y 8 asientos'],
   UNAUTHORIZED: [401, 'Inicia sesión para continuar'],
+  FORBIDDEN: [403, 'Tu cuenta no tiene acceso al panel'],
   ORDER_NOT_FOUND: [404, 'No encontramos tu orden'],
   TICKET_NOT_FOUND: [404, 'No encontramos este boleto'],
   SEAT_TAKEN: [409, 'Alguien acaba de tomar uno de tus asientos'],

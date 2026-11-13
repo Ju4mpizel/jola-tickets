@@ -10,6 +10,7 @@ const QUICK_REASONS = [
   'Comprobante ilegible',
   'Falta el código en la glosa',
 ];
+const MIN_REASON = 3;
 const MAX_REASON = 300;
 
 /**
@@ -44,8 +45,8 @@ export default function RejectDialog({ order, onClose, onConfirm }) {
   async function submit(e) {
     e.preventDefault();
     const clean = reason.trim();
-    if (!clean) {
-      setError('Escribe o elige el motivo del rechazo');
+    if (clean.length < MIN_REASON) {
+      setError(clean ? `El motivo debe tener al menos ${MIN_REASON} caracteres` : 'Escribe o elige el motivo del rechazo');
       textRef.current?.focus();
       return;
     }

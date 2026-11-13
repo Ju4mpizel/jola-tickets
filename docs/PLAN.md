@@ -359,7 +359,7 @@ El frontend solo conoce estas rutas, con el prefijo `/api/v1`. En la Versión A 
 | POST | `/admin/check-in` | `{token}` | `{result, buyer_name, row, number, scanned_at}` | `check_in` |
 | POST | `/admin/seats/block` | `{seat_ids, blocked}` | `{changed}` | `set_seats_blocked` |
 | GET | `/admin/seats` | — | `[{id, row, number, vip, status, order_code?}]`, `status` = `available`, `held`, `pending_review`, `sold` o `blocked` (vista detallada solo para la directiva) | lectura directa |
-| GET | `/admin/stats` | — | vendidos, en revisión, recaudado | lectura directa |
+| GET | `/admin/stats` | — | `{sold, pending_review, revenue, checked_in, blocked}` | lectura directa |
 
 ### Errores
 
@@ -368,7 +368,8 @@ Todas las respuestas de error tienen la forma `{"error": "<CÓDIGO>", "message":
 | Código | HTTP | Qué muestra el frontend |
 | --- | --- | --- |
 | `INVALID_DATA` / `INVALID_SEAT_COUNT` | 400 | El campo marcado o "Elige entre 1 y 8 asientos" |
-| `UNAUTHORIZED` | 401 / 403 | Vuelve al login de la directiva |
+| `UNAUTHORIZED` | 401 | Vuelve al login de la directiva |
+| `FORBIDDEN` | 403 | "Tu cuenta no tiene acceso al panel", cierra la sesión |
 | `ORDER_NOT_FOUND` | 404 | "No encontramos tu orden" |
 | `SEAT_TAKEN` | 409 | "Alguien acaba de tomar uno de tus asientos", recarga el mapa |
 | `ORDER_NOT_AWAITING_PAYMENT` / `ORDER_NOT_PENDING` | 409 | "Esta orden ya fue procesada" |
